@@ -1,121 +1,169 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'theme/app_theme.dart';
+import 'models/compra.dart';
+import 'models/produto_acabando.dart';
+import 'screens/home_screen.dart';
+import 'screens/historico_screen.dart';
+import 'screens/compras_futuras_screen.dart';
+import 'screens/adicionar_compra_screen.dart';
+import 'widgets/app_bottom_nav_bar.dart';
 
 void main() {
-  runApp(const MyApp());
+  // Garante que o Flutter esteja inicializado antes de configurar orientacao
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Bloqueia orientacao para apenas retrato (comportamento padrao mobile)
+  SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
+  runApp(const ListaComprasApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+// Widget raiz do aplicativo
+class ListaComprasApp extends StatelessWidget {
+  const ListaComprasApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'Lista Compras',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.theme,
+      home: const MainNavigationWrapper(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+// Wrapper de navegacao que gerencia o estado global das compras
+// e controla qual aba esta ativa na bottom nav bar
+class MainNavigationWrapper extends StatefulWidget {
+  const MainNavigationWrapper({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<MainNavigationWrapper> createState() => _MainNavigationWrapperState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
+  // Aba atualmente selecionada (0: Home, 1: Compras Futuras, 2: Historico)
+  int _abaAtual = 0;
 
-  void _incrementCounter() {
+  // Lista de compras do mes atual - inicia vazia
+  final List<Compra> _comprasMesAtual = [];
+
+  // Historico de meses anteriores - inicia vazio
+  final List<ResumoMes> _historico = [];
+
+  // Lista de produtos que estao acabando
+  final List<ProdutoAcabando> _produtosAcabando = [];
+
+  // Mes e ano exibidos no cabecalho
+  final String _mesAno = _obterMesAno();
+
+  // Retorna o mes e ano atual formatados em portugues
+  static String _obterMesAno() {
+    final agora = DateTime.now();
+    const meses = [
+      'Janeiro',
+      'Fevereiro',
+      'Marco',
+      'Abril',
+      'Maio',
+      'Junho',
+      'Julho',
+      'Agosto',
+      'Setembro',
+      'Outubro',
+      'Novembro',
+      'Dezembro',
+    ];
+    return '${meses[agora.month - 1]} ${agora.year}';
+  }
+
+  // Adiciona uma nova compra a lista do mes atual
+  void _adicionarCompra(Compra compra) {
+    setState(() => _comprasMesAtual.add(compra));
+  }
+
+  // Alterna o estado de "marcado" de uma compra pelo id
+  void _toggleMarcado(String id) {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      final index = _comprasMesAtual.indexWhere((c) => c.id == id);
+      if (index != -1) {
+        final compra = _comprasMesAtual[index];
+        _comprasMesAtual[index] = compra.copyWith(marcado: !compra.marcado);
+      }
     });
+  }
+
+  // Adiciona um produto a lista de acabando
+  void _adicionarProdutoAcabando(ProdutoAcabando produto) {
+    setState(() => _produtosAcabando.add(produto));
+  }
+
+  // Edita uma compra existente, substituindo por id
+  void _editarCompra(Compra compraEditada) {
+    setState(() {
+      final index = _comprasMesAtual.indexWhere(
+        (c) => c.id == compraEditada.id,
+      );
+      if (index != -1) {
+        _comprasMesAtual[index] = compraEditada;
+      }
+    });
+  }
+
+  // Remove um produto da lista de acabando pelo id
+  void _removerProdutoAcabando(String id) {
+    setState(() => _produtosAcabando.removeWhere((p) => p.id == id));
+  }
+
+  // Troca a aba ativa na bottom navigation
+  void _trocarAba(int index) {
+    setState(() => _abaAtual = index);
+  }
+
+  // Retorna a tela correspondente a aba selecionada
+  Widget _buildTela() {
+    switch (_abaAtual) {
+      case 0:
+        return HomeScreen(
+          compras: _comprasMesAtual,
+          mesAno: _mesAno,
+          onAdicionarCompra: _adicionarCompra,
+          onMarcarAcabando: _adicionarProdutoAcabando,
+          onEditarCompra: _editarCompra,
+        );
+      case 1:
+        return ComprasFuturasScreen(
+          produtosAcabando: _produtosAcabando,
+          onAdicionarCompra: _adicionarCompra,
+        );
+      case 2:
+        return HistoricoScreen(historico: _historico);
+      default:
+        return HomeScreen(
+          compras: _comprasMesAtual,
+          mesAno: _mesAno,
+          onAdicionarCompra: _adicionarCompra,
+          onMarcarAcabando: _adicionarProdutoAcabando,
+          onEditarCompra: _editarCompra,
+        );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+      // A tela e construida dinamicamente conforme a aba ativa
+      body: _buildTela(),
+
+      // Barra de navegacao inferior compartilhada entre todas as telas
+      bottomNavigationBar: AppBottomNavBar(
+        currentIndex: _abaAtual,
+        onTap: _trocarAba,
       ),
     );
   }
