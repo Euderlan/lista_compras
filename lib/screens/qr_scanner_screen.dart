@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import '../models/compra.dart';
 import '../theme/app_theme.dart';
+import '../screens/webview_nota_screen.dart';
 
 class QrScannerScreen extends StatefulWidget {
   const QrScannerScreen({super.key});
@@ -11,12 +13,37 @@ class QrScannerScreen extends StatefulWidget {
 
 class _QrScannerScreenState extends State<QrScannerScreen> {
   MobileScannerController controller = MobileScannerController();
-  String? scannedData;
+  bool _processando = false;
+  String _status = 'Aponte para o QR Code da nota fiscal';
 
   @override
   void dispose() {
     controller.dispose();
     super.dispose();
+  }
+
+  // Processa o QR code escaneado — abre WebView para extrair produtos
+  Future<void> _processarQR(String url) async {
+    if (_processando) return;
+    setState(() {
+      _processando = true;
+      _status = 'Abrindo nota fiscal...';
+    });
+    await controller.stop();
+
+    if (!mounted) return;
+
+    // Abre o WebView que carrega a pagina da SEFAZ e extrai os produtos
+    final resultado = await Navigator.push<List<Compra>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => WebViewNotaScreen(url: url),
+      ),
+    );
+
+    if (!mounted) return;
+    // Retorna os produtos confirmados para o HomeScreen
+    Navigator.pop(context, resultado);
   }
 
   @override
@@ -26,12 +53,8 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: const Text(
-          'Escanear QR Code',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-          ),
+          'Escanear Nota Fiscal',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
         ),
         centerTitle: true,
         leading: IconButton(
@@ -47,63 +70,78 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
       ),
       body: Stack(
         children: [
+          // Camera
           MobileScanner(
             controller: controller,
             onDetect: (BarcodeCapture capture) {
-              final List<Barcode> barcodes = capture.barcodes;
-              if (barcodes.isNotEmpty) {
-                final String? code = barcodes.first.rawValue;
-                if (code != null && mounted) {
-                  setState(() {
-                    scannedData = code;
-                  });
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    Navigator.pop(context, scannedData);
-                  });
+              final barcodes = capture.barcodes;
+              if (barcodes.isNotEmpty && !_processando) {
+                final code = barcodes.first.rawValue;
+                if (code != null && code.contains('nfce') || code != null && code.contains('nfe') || code != null && code.contains('sefaz')) {
+                  _processarQR(code);
                 }
               }
             },
           ),
-          // Custom overlay for scanning area
+
+          // Overlay de escurecimento nas bordas
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.4),
+            ),
+          ),
+
+          // Area de scan transparente no centro
           Center(
             child: Container(
-              width: MediaQuery.of(context).size.width * 0.8,
-              height: MediaQuery.of(context).size.width * 0.8,
+              width: MediaQuery.of(context).size.width * 0.75,
+              height: MediaQuery.of(context).size.width * 0.75,
               decoration: BoxDecoration(
-                border: Border.all(
-                  color: AppColors.accent,
-                  width: 2,
-                ),
-                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.accent, width: 2.5),
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.transparent,
               ),
-              child: const Center(
-                child: Text(
-                  'Alinhe o QR code aqui',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    backgroundColor: Colors.black54,
-                  ),
+            ),
+          ),
+
+          // Limpa o fundo da area de scan
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                width: MediaQuery.of(context).size.width * 0.75,
+                height: MediaQuery.of(context).size.width * 0.75,
+                child: MobileScanner(
+                  controller: controller,
+                  onDetect: (_) {},
                 ),
               ),
             ),
           ),
+
+          // Status e loading
           Positioned(
-            bottom: 100,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Text(
-                scannedData != null
-                    ? 'Código escaneado: ${scannedData!.substring(0, 50)}...'
-                    : 'Posicione o QR code da nota fiscal na câmera',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 16,
-                  color: Colors.white,
-                  backgroundColor: Colors.black54,
+            bottom: 80,
+            left: 24,
+            right: 24,
+            child: Column(
+              children: [
+                if (_processando)
+                  const CircularProgressIndicator(color: Colors.white),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    _processando ? 'Buscando produtos da nota...' : _status,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ],

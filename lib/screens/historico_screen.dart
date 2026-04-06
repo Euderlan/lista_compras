@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/compra.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_header.dart';
 
 // Tela de historico exibindo o resumo de gastos por mes
-// com o valor total e numero de compras de cada periodo
 class HistoricoScreen extends StatelessWidget {
-  // Lista de resumos mensais para exibicao
   final List<ResumoMes> historico;
-
-  // Callback ao tocar em um mes especifico
   final ValueChanged<ResumoMes>? onSelecionarMes;
 
   const HistoricoScreen({
@@ -17,7 +14,6 @@ class HistoricoScreen extends StatelessWidget {
     this.onSelecionarMes,
   });
 
-  // Formata o valor como moeda brasileira
   String _formatarValor(double valor) {
     final partes = valor.toStringAsFixed(2).split('.');
     return 'R\$ ${partes[0]},${partes[1]}';
@@ -27,61 +23,22 @@ class HistoricoScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header simples com titulo
-          _buildHeader(),
-
-          // Lista de meses ou estado vazio
-          Expanded(
-            child: historico.isEmpty
-                ? _buildEstadoVazio()
-                : _buildListaHistorico(),
-          ),
-        ],
-      ),
+      appBar: AppHeader(titulo: 'Histórico'),
+      body: historico.isEmpty ? _buildEstadoVazio() : _buildListaHistorico(),
     );
   }
 
-  // Header com titulo "Historico" e safe area
-  Widget _buildHeader() {
-    return SafeArea(
-      bottom: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Historico',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                color: AppColors.textPrimary,
-                letterSpacing: -0.5,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Lista de cards de meses agrupados por ano
   Widget _buildListaHistorico() {
-    // Agrupa os meses por ano
     final Map<int, List<ResumoMes>> porAno = {};
     for (final mes in historico) {
       porAno.putIfAbsent(mes.ano, () => []).add(mes);
     }
 
-    // Ordena os anos de mais recente para mais antigo
     final anosOrdenados = porAno.keys.toList()
       ..sort((a, b) => b.compareTo(a));
 
     return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(top: 12, bottom: 24),
       itemCount: anosOrdenados.length,
       itemBuilder: (context, index) {
         final ano = anosOrdenados[index];
@@ -90,7 +47,6 @@ class HistoricoScreen extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Label do ano
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Text(
@@ -103,7 +59,6 @@ class HistoricoScreen extends StatelessWidget {
                 ),
               ),
             ),
-            // Cards dos meses deste ano
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 16),
               decoration: BoxDecoration(
@@ -119,13 +74,11 @@ class HistoricoScreen extends StatelessWidget {
                     final resumo = entry.value;
                     return Column(
                       children: [
-                        // Card de cada mes
                         _CardMes(
                           resumo: resumo,
                           formatarValor: _formatarValor,
                           onTap: () => onSelecionarMes?.call(resumo),
                         ),
-                        // Separador entre meses (exceto o ultimo)
                         if (i < mesesDoAno.length - 1)
                           const Divider(
                             height: 1,
@@ -146,7 +99,6 @@ class HistoricoScreen extends StatelessWidget {
     );
   }
 
-  // Exibido quando ainda nao ha historico registrado
   Widget _buildEstadoVazio() {
     return Center(
       child: Column(
@@ -155,11 +107,11 @@ class HistoricoScreen extends StatelessWidget {
           Icon(
             Icons.history_outlined,
             size: 56,
-            color: AppColors.textTertiary.withOpacity(0.4),
+            color: AppColors.textTertiary.withValues(alpha: 0.4),
           ),
           const SizedBox(height: 12),
           const Text(
-            'Nenhum historico disponivel',
+            'Nenhum histórico disponível',
             style: TextStyle(
               fontSize: 15,
               color: AppColors.textTertiary,
@@ -167,7 +119,7 @@ class HistoricoScreen extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Seus gastos mensais aparecerão aqui',
+            'Feche o mês atual para ver o histórico aqui',
             style: TextStyle(
               fontSize: 13,
               color: AppColors.textTertiary,
@@ -179,7 +131,6 @@ class HistoricoScreen extends StatelessWidget {
   }
 }
 
-// Card de um mes individual no historico
 class _CardMes extends StatelessWidget {
   final ResumoMes resumo;
   final String Function(double) formatarValor;
@@ -200,12 +151,10 @@ class _CardMes extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Informacoes do mes
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Nome do mes e ano
                   Text(
                     resumo.label,
                     style: const TextStyle(
@@ -215,7 +164,6 @@ class _CardMes extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 2),
-                  // Total gasto em verde
                   Text(
                     formatarValor(resumo.totalGasto),
                     style: const TextStyle(
@@ -225,7 +173,6 @@ class _CardMes extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 2),
-                  // Numero de compras
                   Text(
                     '${resumo.totalCompras} compras',
                     style: const TextStyle(
@@ -236,7 +183,6 @@ class _CardMes extends StatelessWidget {
                 ],
               ),
             ),
-            // Icone de check (mes concluido) ou seta (mes ativo)
             if (resumo.concluido)
               Container(
                 width: 28,
@@ -245,11 +191,7 @@ class _CardMes extends StatelessWidget {
                   color: AppColors.checkGreen,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.check,
-                  color: Colors.white,
-                  size: 16,
-                ),
+                child: const Icon(Icons.check, color: Colors.white, size: 16),
               )
             else
               const Icon(

@@ -1,19 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'theme/app_theme.dart';
 import 'models/compra.dart';
 import 'models/produto_acabando.dart';
 import 'screens/home_screen.dart';
 import 'screens/historico_screen.dart';
 import 'screens/compras_futuras_screen.dart';
-import 'screens/adicionar_compra_screen.dart';
+import 'screens/login_screen.dart';
+import 'services/auth_service.dart';
+import 'services/compras_service.dart';
+import 'services/produtos_acabando_service.dart';
+import 'services/historico_service.dart';
 import 'widgets/app_bottom_nav_bar.dart';
 
-void main() {
-  // Garante que o Flutter esteja inicializado antes de configurar orientacao
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Bloqueia orientacao para apenas retrato (comportamento padrao mobile)
+  await Supabase.initialize(
+    url: 'https://saipamdfykhvniozhndl.supabase.co',
+    anonKey: 'sb_publishable_eWcmYcnkkdm6qdZ30ulAYg_V_2obdgD',
+  );
+
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -22,7 +30,6 @@ void main() {
   runApp(const ListaComprasApp());
 }
 
-// Widget raiz do aplicativo
 class ListaComprasApp extends StatelessWidget {
   const ListaComprasApp({super.key});
 
@@ -32,13 +39,53 @@ class ListaComprasApp extends StatelessWidget {
       title: 'Lista Compras',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.theme,
-      home: const MainNavigationWrapper(),
+      home: const AuthWrapper(),
     );
   }
 }
 
-// Wrapper de navegacao que gerencia o estado global das compras
-// e controla qual aba esta ativa na bottom nav bar
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<AuthState>(
+      stream: Supabase.instance.client.auth.onAuthStateChange,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const _SplashScreen();
+        }
+        final session = snapshot.data?.session;
+        if (session != null) {
+          return const MainNavigationWrapper();
+        }
+        return LoginScreen(onLoginSucesso: () {});
+      },
+    );
+  }
+}
+
+class _SplashScreen extends StatelessWidget {
+  const _SplashScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF2D5016),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.shopping_cart_outlined, color: Colors.white, size: 56),
+            SizedBox(height: 16),
+            CircularProgressIndicator(color: Colors.white),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class MainNavigationWrapper extends StatefulWidget {
   const MainNavigationWrapper({super.key});
 
@@ -47,86 +94,169 @@ class MainNavigationWrapper extends StatefulWidget {
 }
 
 class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
-  // Aba atualmente selecionada (0: Home, 1: Compras Futuras, 2: Historico)
   int _abaAtual = 0;
+  List<Compra> _comprasMesAtual = [];
+  List<ResumoMes> _historico = [];
+  List<ProdutoAcabando> _produtosAcabando = [];
+  bool _carregandoDados = true;
 
-  // Lista de compras do mes atual - inicia vazia
-  final List<Compra> _comprasMesAtual = [];
+  final _authService = AuthService();
+  final _comprasService = ComprasService();
+  final _produtosService = ProdutosAcabandoService();
+  final _historicoService = HistoricoService();
 
-  // Historico de meses anteriores - inicia vazio
-  final List<ResumoMes> _historico = [];
-
-  // Lista de produtos que estao acabando
-  final List<ProdutoAcabando> _produtosAcabando = [];
-
-  // Mes e ano exibidos no cabecalho
   final String _mesAno = _obterMesAno();
 
-  // Retorna o mes e ano atual formatados em portugues
   static String _obterMesAno() {
     final agora = DateTime.now();
     const meses = [
-      'Janeiro',
-      'Fevereiro',
-      'Marco',
-      'Abril',
-      'Maio',
-      'Junho',
-      'Julho',
-      'Agosto',
-      'Setembro',
-      'Outubro',
-      'Novembro',
-      'Dezembro',
+      'Janeiro','Fevereiro','Marco','Abril','Maio','Junho',
+      'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro',
     ];
     return '${meses[agora.month - 1]} ${agora.year}';
   }
 
-  // Adiciona uma nova compra a lista do mes atual
-  void _adicionarCompra(Compra compra) {
-    setState(() => _comprasMesAtual.add(compra));
+  @override
+  void initState() {
+    super.initState();
+    _carregarDados();
   }
 
-  // Alterna o estado de "marcado" de uma compra pelo id
-  void _toggleMarcado(String id) {
-    setState(() {
-      final index = _comprasMesAtual.indexWhere((c) => c.id == id);
-      if (index != -1) {
-        final compra = _comprasMesAtual[index];
-        _comprasMesAtual[index] = compra.copyWith(marcado: !compra.marcado);
+  Future<void> _carregarDados() async {
+    try {
+      final compras = await _comprasService.buscarComprasMes(_mesAno);
+      final produtos = await _produtosService.buscarProdutos();
+      final historico = await _historicoService.buscarHistorico();
+      if (mounted) {
+        setState(() {
+          _comprasMesAtual = compras;
+          _produtosAcabando = produtos;
+          _historico = historico;
+          _carregandoDados = false;
+        });
       }
-    });
-  }
-
-  // Adiciona um produto a lista de acabando
-  void _adicionarProdutoAcabando(ProdutoAcabando produto) {
-    setState(() => _produtosAcabando.add(produto));
-  }
-
-  // Edita uma compra existente, substituindo por id
-  void _editarCompra(Compra compraEditada) {
-    setState(() {
-      final index = _comprasMesAtual.indexWhere(
-        (c) => c.id == compraEditada.id,
-      );
-      if (index != -1) {
-        _comprasMesAtual[index] = compraEditada;
+    } catch (e) {
+      if (mounted) {
+        setState(() => _carregandoDados = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Erro ao carregar dados. Verifique sua conexao.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
       }
-    });
+    }
   }
 
-  // Remove um produto da lista de acabando pelo id
-  void _removerProdutoAcabando(String id) {
-    setState(() => _produtosAcabando.removeWhere((p) => p.id == id));
+  Future<void> _adicionarCompra(Compra compra) async {
+    try {
+      final nova = await _comprasService.adicionarCompra(compra, _mesAno);
+      setState(() => _comprasMesAtual.add(nova));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Erro ao salvar compra.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
   }
 
-  // Troca a aba ativa na bottom navigation
-  void _trocarAba(int index) {
-    setState(() => _abaAtual = index);
+  Future<void> _removerCompra(String id) async {
+    try {
+      await _comprasService.removerCompra(id);
+      setState(() => _comprasMesAtual.removeWhere((c) => c.id == id));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Erro ao remover compra.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
   }
 
-  // Retorna a tela correspondente a aba selecionada
+  Future<void> _editarCompra(Compra compraEditada) async {
+    try {
+      final atualizada = await _comprasService.atualizarCompra(compraEditada);
+      setState(() {
+        final i = _comprasMesAtual.indexWhere((c) => c.id == atualizada.id);
+        if (i != -1) _comprasMesAtual[i] = atualizada;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Erro ao atualizar compra.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
+  Future<void> _adicionarProdutoAcabando(ProdutoAcabando produto) async {
+    try {
+      final novo = await _produtosService.adicionarProduto(produto);
+      setState(() => _produtosAcabando.add(novo));
+    } catch (_) {}
+  }
+
+  Future<void> _fecharMes() async {
+    if (_comprasMesAtual.isEmpty) return;
+    final agora = DateTime.now();
+    const meses = [
+      'Janeiro','Fevereiro','Marco','Abril','Maio','Junho',
+      'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro',
+    ];
+    final totalGasto = _comprasMesAtual.fold<double>(0, (s, c) => s + c.total);
+    final resumo = ResumoMes(
+      mes: meses[agora.month - 1],
+      ano: agora.year,
+      totalGasto: totalGasto,
+      totalCompras: _comprasMesAtual.length,
+      concluido: true,
+    );
+    try {
+      await _historicoService.salvarResumoMes(resumo);
+      await _comprasService.removerComprasMes(_mesAno);
+      setState(() {
+        _historico.insert(0, resumo);
+        _comprasMesAtual.clear();
+        _abaAtual = 2;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Mes fechado! Confira o historico.'),
+          backgroundColor: Color(0xFF2D5016),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Erro ao fechar o mes. Tente novamente.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
+  Future<void> _logout() async {
+    await _authService.sair();
+  }
+
+  void _trocarAba(int index) => setState(() => _abaAtual = index);
+
   Widget _buildTela() {
+    if (_carregandoDados) {
+      return const Scaffold(
+        backgroundColor: Color(0xFFF5F5F0),
+        body: Center(child: CircularProgressIndicator(color: Color(0xFF2D5016))),
+      );
+    }
     switch (_abaAtual) {
       case 0:
         return HomeScreen(
@@ -135,6 +265,9 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
           onAdicionarCompra: _adicionarCompra,
           onMarcarAcabando: _adicionarProdutoAcabando,
           onEditarCompra: _editarCompra,
+          onFecharMes: _fecharMes,
+          onLogout: _logout,
+          onRemoverCompra: _removerCompra,
         );
       case 1:
         return ComprasFuturasScreen(
@@ -150,6 +283,9 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
           onAdicionarCompra: _adicionarCompra,
           onMarcarAcabando: _adicionarProdutoAcabando,
           onEditarCompra: _editarCompra,
+          onFecharMes: _fecharMes,
+          onLogout: _logout,
+          onRemoverCompra: _removerCompra,
         );
     }
   }
@@ -157,10 +293,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // A tela e construida dinamicamente conforme a aba ativa
       body: _buildTela(),
-
-      // Barra de navegacao inferior compartilhada entre todas as telas
       bottomNavigationBar: AppBottomNavBar(
         currentIndex: _abaAtual,
         onTap: _trocarAba,
