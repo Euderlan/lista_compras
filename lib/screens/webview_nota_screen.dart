@@ -17,49 +17,84 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
   late WebViewController _controller;
   bool _carregando = true;
   bool _extraindo = false;
-  String _status = 'Carregando nota fiscal...';
+  bool _notaCarregada = false;
+  String _status = 'Aguarde...';
 
-  // JavaScript montado em partes para evitar conflito de escape com Dart
+  // JavaScript para o portal RJ (fazenda.rj.gov.br) e SEFAZ-MA
   static String get _jsExtrator {
     final sb = StringBuffer();
     sb.writeln('(function() {');
     sb.writeln('  try {');
     sb.writeln('    var produtos = [];');
     sb.writeln('    var loja = "";');
-    sb.writeln('    var lojaEl = document.querySelector("#nomeEmitente, .razaoSocial");');
-    sb.writeln('    if (lojaEl) loja = lojaEl.innerText.trim().substring(0, 80);');
-    sb.writeln('    var linhas = document.querySelectorAll("table#tabResult tr, .item, tr");');
-    sb.writeln('    linhas.forEach(function(linha) {');
-    sb.writeln('      var nomeEl = linha.querySelector(".nome_item, .txtTit, td:first-child");');
-    sb.writeln('      var nome = nomeEl ? nomeEl.innerText.trim() : "";');
-    sb.writeln('      var qtdEl = linha.querySelector(".Qcom");');
-    sb.writeln('      var qtd = qtdEl ? parseFloat(qtdEl.innerText.replace(",",".")) || 1 : 1;');
-    sb.writeln('      var valorEl = linha.querySelector(".VunCom, td:nth-child(3)");');
-    sb.writeln('      var vt = "0";');
-    sb.writeln('      if (valorEl) {');
-    sb.writeln('        vt = valorEl.innerText.trim();');
-    sb.writeln('        vt = vt.split("R").join("").split(" ").join("");');
-    sb.writeln('        vt = vt.split(".").join("").split(",").join(".");');
-    sb.writeln('      }');
-    sb.writeln('      var valor = parseFloat(vt) || 0;');
-    sb.writeln('      if (nome && nome.length > 2 && valor > 0) {');
-    sb.writeln('        produtos.push({ nome: nome.substring(0,100), quantidade: Math.round(qtd), preco: valor });');
-    sb.writeln('      }');
-    sb.writeln('    });');
-    sb.writeln('    if (produtos.length === 0) {');
-    sb.writeln('      document.querySelectorAll("span.txtTit, span.Nome").forEach(function(sp) {');
-    sb.writeln('        var c = sp.closest("tr, .item, li");');
-    sb.writeln('        if (!c) return;');
-    sb.writeln('        var nome = sp.innerText.trim();');
-    sb.writeln('        var preco = 0;');
-    sb.writeln('        c.querySelectorAll("span").forEach(function(v) {');
-    sb.writeln('          var raw = v.innerText.split(",").join(".");');
-    sb.writeln('          var n = parseFloat(raw);');
-    sb.writeln('          if (n > 0 && preco === 0) preco = n;');
-    sb.writeln('        });');
-    sb.writeln('        if (nome && preco > 0) produtos.push({ nome: nome, quantidade: 1, preco: preco });');
+
+    // Nome da loja — varios seletores para cobrir ambos portais
+    sb.writeln('    var lojaSelectors = [".txtTopo", "#u20", "#nomeEmitente", ".NomEmit", ".razaoSocial", "h2.text-center"];');
+    sb.writeln('    for (var i = 0; i < lojaSelectors.length; i++) {');
+    sb.writeln('      var el = document.querySelector(lojaSelectors[i]);');
+    sb.writeln('      if (el && el.innerText.trim().length > 2) { loja = el.innerText.trim().substring(0,80); break; }');
+    sb.writeln('    }');
+
+    // Padrao SEFAZ-MA/nacional: table#tabResult com span.txtTit
+    sb.writeln('    var linhasMA = document.querySelectorAll("table#tabResult tr");');
+    sb.writeln('    if (linhasMA.length > 0) {');
+    sb.writeln('      linhasMA.forEach(function(linha) {');
+    sb.writeln('        var nomeEl = linha.querySelector("span.txtTit");');
+    sb.writeln('        if (!nomeEl) return;');
+    sb.writeln('        var nome = nomeEl.innerText.trim();');
+    sb.writeln('        if (!nome || nome.length < 2) return;');
+    sb.writeln('        var qtdEl = linha.querySelector("span.Rqtd");');
+    sb.writeln('        var qtdTxt = qtdEl ? qtdEl.innerText.replace("Qtde.:","").trim() : "1";');
+    sb.writeln('        var qtd = parseInt(qtdTxt) || 1;');
+    sb.writeln('        var valorEl = linha.querySelector("span.RvlUnit");');
+    sb.writeln('        var valorTxt = valorEl ? valorEl.innerText.replace("Vl. Unit.:","").trim() : "0";');
+    sb.writeln('        valorTxt = valorTxt.split(".").join("").split(",").join(".");');
+    sb.writeln('        var valor = parseFloat(valorTxt) || 0;');
+    sb.writeln('        if (valor === 0) {');
+    sb.writeln('          var totalEl = linha.querySelector("span.valor");');
+    sb.writeln('          var totalTxt = totalEl ? totalEl.innerText.split(".").join("").split(",").join(".") : "0";');
+    sb.writeln('          valor = parseFloat(totalTxt) / qtd || 0;');
+    sb.writeln('        }');
+    sb.writeln('        if (valor > 0) produtos.push({ nome: nome.substring(0,100), quantidade: qtd, preco: parseFloat(valor.toFixed(2)) });');
     sb.writeln('      });');
     sb.writeln('    }');
+
+    // Padrao portal RJ: tabela com classe especifica
+    sb.writeln('    if (produtos.length === 0) {');
+    sb.writeln('      var linhasRJ = document.querySelectorAll("table.toItens tbody tr, .item-list tr, #tableItens tr");');
+    sb.writeln('      linhasRJ.forEach(function(linha) {');
+    sb.writeln('        var cells = linha.querySelectorAll("td");');
+    sb.writeln('        if (cells.length < 2) return;');
+    sb.writeln('        var nome = cells[0].innerText.trim();');
+    sb.writeln('        if (!nome || nome.length < 2) return;');
+    sb.writeln('        var qtd = 1;');
+    sb.writeln('        var valor = 0;');
+    sb.writeln('        for (var c = 1; c < cells.length; c++) {');
+    sb.writeln('          var t = cells[c].innerText.trim().split(".").join("").split(",").join(".");');
+    sb.writeln('          var n = parseFloat(t);');
+    sb.writeln('          if (n > 0 && n < 100000) { valor = n; }');
+    sb.writeln('        }');
+    sb.writeln('        if (valor > 0) produtos.push({ nome: nome.substring(0,100), quantidade: qtd, preco: parseFloat(valor.toFixed(2)) });');
+    sb.writeln('      });');
+    sb.writeln('    }');
+
+    // Fallback geral: qualquer span.txtTit na pagina
+    sb.writeln('    if (produtos.length === 0) {');
+    sb.writeln('      document.querySelectorAll("span.txtTit").forEach(function(el) {');
+    sb.writeln('        var nome = el.innerText.trim();');
+    sb.writeln('        if (!nome || nome.length < 2) return;');
+    sb.writeln('        var container = el.closest("tr, li, .item");');
+    sb.writeln('        if (!container) return;');
+    sb.writeln('        var valor = 0;');
+    sb.writeln('        container.querySelectorAll("span.valor, span.RvlUnit, td").forEach(function(v) {');
+    sb.writeln('          var t = v.innerText.trim().split(".").join("").split(",").join(".");');
+    sb.writeln('          var n = parseFloat(t);');
+    sb.writeln('          if (n > 0 && valor === 0) valor = n;');
+    sb.writeln('        });');
+    sb.writeln('        if (valor > 0) produtos.push({ nome: nome.substring(0,100), quantidade: 1, preco: valor });');
+    sb.writeln('      });');
+    sb.writeln('    }');
+
     sb.writeln('    return JSON.stringify({ produtos: produtos, loja: loja });');
     sb.writeln('  } catch(e) {');
     sb.writeln('    return JSON.stringify({ produtos: [], loja: "", erro: e.toString() });');
@@ -68,13 +103,49 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     return sb.toString();
   }
 
+
   @override
   void initState() {
     super.initState();
     _inicializarWebView();
   }
 
+  // Extrai a chave de acesso de 44 digitos da URL do QR code
+  String _extrairChave(String url) {
+    try {
+      // Formato: ...?p=CHAVE44DIGITOS|...
+      final uri = Uri.parse(url);
+      final p = uri.queryParameters['p'] ?? '';
+      if (p.isNotEmpty) {
+        final partes = p.split('|');
+        if (partes.isNotEmpty && partes[0].length == 44) {
+          return partes[0];
+        }
+        // Tenta pegar os primeiros 44 digitos numericos
+        final soNumeros = p.replaceAll(RegExp(r'[^0-9]'), '');
+        if (soNumeros.length >= 44) return soNumeros.substring(0, 44);
+      }
+      // Tenta extrair chave diretamente da URL
+      final match = RegExp(r'[0-9]{44}').firstMatch(url);
+      return match?.group(0) ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // Monta a URL do portal RJ com a chave de acesso
+  String _montarUrlRJ(String urlOriginal) {
+    final chave = _extrairChave(urlOriginal);
+    if (chave.isNotEmpty) {
+      return 'https://www.fazenda.rj.gov.br/nfce/consulta?p=$chave|2|1|1|';
+    }
+    // Se nao encontrou chave, abre o portal direto
+    return 'https://www.fazenda.rj.gov.br/nfce/consulta';
+  }
+
   void _inicializarWebView() {
+    final urlRJ = _montarUrlRJ(widget.url);
+
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent(
@@ -87,17 +158,75 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
             _carregando = true;
             _status = 'Carregando nota fiscal...';
           }),
-          onPageFinished: (_) {
+          onPageFinished: (url) {
             setState(() => _carregando = false);
-            Future.delayed(const Duration(seconds: 2), _extrairProdutos);
+            // Tenta preencher o campo de chave automaticamente
+            _preencherChaveRJ();
+            _verificarSeNotaCarregou();
           },
           onWebResourceError: (_) => setState(() {
             _carregando = false;
-            _status = 'Erro ao carregar a pagina.';
           }),
+          onNavigationRequest: (_) => NavigationDecision.navigate,
         ),
       )
-      ..loadRequest(Uri.parse(widget.url));
+      ..loadRequest(Uri.parse(urlRJ));
+  }
+
+  // Preenche automaticamente o campo de chave de acesso no portal RJ
+  Future<void> _preencherChaveRJ() async {
+    final chave = _extrairChave(widget.url);
+    if (chave.isEmpty) return;
+
+    try {
+      // Aguarda um pouco para o DOM carregar completamente
+      await Future.delayed(const Duration(milliseconds: 800));
+
+      // Preenche o campo de chave e clica em consultar
+      await _controller.runJavaScript('''
+        (function() {
+          var inputs = document.querySelectorAll("input[type=text], input[type=search], input:not([type])");
+          for (var i = 0; i < inputs.length; i++) {
+            var placeholder = (inputs[i].placeholder || "").toLowerCase();
+            var name = (inputs[i].name || "").toLowerCase();
+            var id = (inputs[i].id || "").toLowerCase();
+            if (placeholder.includes("chave") || name.includes("chave") || id.includes("chave") ||
+                placeholder.includes("acesso") || name.includes("acesso") || id.includes("acesso") ||
+                placeholder.includes("nfe") || name.includes("nfe")) {
+              inputs[i].value = "$chave";
+              inputs[i].dispatchEvent(new Event("input", { bubbles: true }));
+              inputs[i].dispatchEvent(new Event("change", { bubbles: true }));
+              break;
+            }
+          }
+          // Tenta tambem pelo primeiro input de texto vazio
+          var allInputs = document.querySelectorAll("input[type=text]");
+          if (allInputs.length > 0 && allInputs[0].value === "") {
+            allInputs[0].value = "$chave";
+            allInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
+            allInputs[0].dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        })();
+      ''');
+    } catch (_) {}
+  }
+
+  // Verifica se a pagina atual ja contem os dados da nota
+  Future<void> _verificarSeNotaCarregou() async {
+    try {
+      final resultado = await _controller.runJavaScriptReturningResult(
+        'document.querySelector("table#tabResult") !== null ? "sim" : "nao"'
+      );
+      final temTabela = resultado.toString().contains('sim');
+      if (mounted) {
+        setState(() {
+          _notaCarregada = temTabela;
+          _status = temTabela
+              ? 'Nota carregada! Toque em "Extrair Produtos"'
+              : 'Resolva o CAPTCHA e consulte a nota';
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _extrairProdutos() async {
@@ -208,17 +337,12 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final falhou = !_carregando &&
-        !_extraindo &&
-        (_status.contains('Nenhum') || _status.contains('Erro'));
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.primaryDark,
         title: const Text(
           'Nota Fiscal',
-          style: TextStyle(
-              color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
+          style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
         ),
         centerTitle: true,
         leading: IconButton(
@@ -226,65 +350,103 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          if (!_carregando && !_extraindo)
-            IconButton(
-              icon: const Icon(Icons.refresh, color: Colors.white),
-              tooltip: 'Tentar novamente',
-              onPressed: _extrairProdutos,
-            ),
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            tooltip: 'Verificar novamente',
+            onPressed: _verificarSeNotaCarregou,
+          ),
         ],
       ),
-      body: Stack(
+      body: Column(
         children: [
-          WebViewWidget(controller: _controller),
-
-          if (_carregando || _extraindo)
-            Container(
-              color: Colors.black.withValues(alpha: 0.55),
-              child: Center(
-                child: Container(
-                  margin: const EdgeInsets.all(32),
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
+          // Barra de status informando o usuario o que fazer
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            color: _notaCarregada ? AppColors.accent : Colors.orange.shade700,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              children: [
+                Icon(
+                  _notaCarregada ? Icons.check_circle_outline : Icons.info_outline,
+                  color: Colors.white,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _status,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const CircularProgressIndicator(
-                          color: AppColors.primaryDark),
-                      const SizedBox(height: 16),
-                      Text(
-                        _status,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            fontSize: 15, color: AppColors.textPrimary),
+                ),
+                if (_carregando)
+                  const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                  ),
+              ],
+            ),
+          ),
+
+          // WebView ocupando o espaco disponivel
+          Expanded(
+            child: Stack(
+              children: [
+                WebViewWidget(controller: _controller),
+
+                // Loading overlay ao extrair
+                if (_extraindo)
+                  Container(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    child: Center(
+                      child: Container(
+                        margin: const EdgeInsets.all(32),
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(color: AppColors.primaryDark),
+                            SizedBox(height: 16),
+                            Text(
+                              'Extraindo produtos da nota...',
+                              style: TextStyle(fontSize: 15, color: AppColors.textPrimary),
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // Botao fixo na parte inferior — usuario clica apos resolver CAPTCHA
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: _extraindo ? null : _extrairProdutos,
+                  icon: const Icon(Icons.shopping_cart_outlined),
+                  label: Text(
+                    _extraindo ? 'Extraindo...' : 'Extrair Produtos da Nota',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryDark,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: AppColors.primaryDark.withValues(alpha: 0.5),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
               ),
             ),
-
-          if (falhou)
-            Positioned(
-              bottom: 32,
-              left: 24,
-              right: 24,
-              child: ElevatedButton.icon(
-                onPressed: _extrairProdutos,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Tentar extrair novamente'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryDark,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            ),
+          ),
         ],
       ),
     );

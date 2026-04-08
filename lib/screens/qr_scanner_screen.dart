@@ -77,7 +77,17 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               final barcodes = capture.barcodes;
               if (barcodes.isNotEmpty && !_processando) {
                 final code = barcodes.first.rawValue;
-                if (code != null && code.contains('nfce') || code != null && code.contains('nfe') || code != null && code.contains('sefaz')) {
+                // Detecta QR de nota fiscal por URL ou por chave de 44 digitos
+                final isNota = code != null && (
+                  code.contains('nfce') ||
+                  code.contains('nfe') ||
+                  code.contains('sefaz') ||
+                  code.contains('fazenda') ||
+                  code.contains('consultarNFCe') ||
+                  code.contains('consulta') ||
+                  RegExp(r'[0-9]{44}').hasMatch(code)
+                );
+                if (isNota) {
                   _processarQR(code);
                 }
               }
