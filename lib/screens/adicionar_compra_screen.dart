@@ -130,12 +130,12 @@ class _AdicionarCompraScreenState extends State<AdicionarCompraScreen> {
   }
 
   Future<void> _escanearQRCode() async {
-    final resultado = await Navigator.push<List<Compra>>(
+    final resultado = await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const QrScannerScreen()),
     );
-    // Retorna a lista de compras da nota para quem chamou esta tela
-    if (resultado != null && resultado.isNotEmpty && mounted) {
+    // Retorna qualquer resultado (Map ou List) para quem chamou esta tela
+    if (resultado != null && mounted) {
       Navigator.pop(context, resultado);
     }
   }

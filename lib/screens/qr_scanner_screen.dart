@@ -33,8 +33,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
 
     if (!mounted) return;
 
-    // Abre o WebView que carrega a pagina da SEFAZ e extrai os produtos
-    final resultado = await Navigator.push<List<Compra>>(
+    final resultado = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => WebViewNotaScreen(url: url),
@@ -42,7 +41,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     );
 
     if (!mounted) return;
-    // Retorna os produtos confirmados para o HomeScreen
+    // Repassa o resultado (Map ou null) diretamente para quem chamou o scanner
     Navigator.pop(context, resultado);
   }
 

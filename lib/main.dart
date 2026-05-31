@@ -289,34 +289,46 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   }
 
   // Salva compras da nota fiscal e registra no estoque para rastreamento
-  Future<void> _adicionarComprasNota(
-    List<Compra> compras,
-    List<Map<String, dynamic>> estoques,
-  ) async {
-    for (final compra in compras) {
-      await _adicionarCompra(compra);
-    }
-
-    // Registra cada produto no estoque para rastreamento de quando vai acabar
-    for (final dadosEstoque in estoques) {
-      try {
-        final produto = ProdutoEstoque(
-          id: '',
-          usuarioId: '',
-          nome: dadosEstoque['nome'] as String,
-          categoria: dadosEstoque['categoria'] as Categoria,
-          quantidade: (dadosEstoque['quantidade'] as num).toDouble(),
-          unidade: dadosEstoque['unidade'] as String,
-          pesoUnitario: (dadosEstoque['peso_unitario'] as num).toDouble(),
-          dataCompra: DateTime.now(),
-          mesAno: _mesAno,
-        );
-        await _estoqueService.adicionarProduto(produto);
-      } catch (_) {
-        // Falha silenciosa — não impede o fluxo principal
-      }
-    }
+Future<void> _adicionarComprasNota(
+  List<Compra> compras,
+  List<Map<String, dynamic>> estoques,
+) async {
+  for (final compra in compras) {
+    await _adicionarCompra(compra);
   }
+
+  // Remove produtos semelhantes da lista futura automaticamente
+  final nomesComprados = compras.map((c) => c.nome).toList();
+  try {
+    final removidos =
+        await _produtosService.removerSemelhantes(nomesComprados);
+    if (removidos.isNotEmpty && mounted) {
+      setState(() {
+        _produtosAcabando.removeWhere(
+          (p) => removidos.any((r) =>
+              r.toLowerCase() == p.nome.toLowerCase()),
+        );
+      });
+    }
+  } catch (_) {}
+
+  for (final dadosEstoque in estoques) {
+    try {
+      final produto = ProdutoEstoque(
+        id: '',
+        usuarioId: '',
+        nome: dadosEstoque['nome'] as String,
+        categoria: dadosEstoque['categoria'] as Categoria,
+        quantidade: (dadosEstoque['quantidade'] as num).toDouble(),
+        unidade: dadosEstoque['unidade'] as String,
+        pesoUnitario: (dadosEstoque['peso_unitario'] as num).toDouble(),
+        dataCompra: DateTime.now(),
+        mesAno: _mesAno,
+      );
+      await _estoqueService.adicionarProduto(produto);
+    } catch (_) {}
+  }
+}
 
   Future<void> _removerCompra(String id) async {
     try {
@@ -357,7 +369,22 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
       setState(() => _produtosAcabando.add(novo));
     } catch (_) {}
   }
+Future<void> _atualizarProdutoAcabando(ProdutoAcabando produto) async {
+  try {
+    final atualizado = await _produtosService.atualizarProduto(produto);
+    setState(() {
+      final i = _produtosAcabando.indexWhere((p) => p.id == atualizado.id);
+      if (i != -1) _produtosAcabando[i] = atualizado;
+    });
+  } catch (_) {}
+}
 
+Future<void> _removerProdutoAcabando(String id) async {
+  try {
+    await _produtosService.removerProduto(id);
+    setState(() => _produtosAcabando.removeWhere((p) => p.id == id));
+  } catch (_) {}
+}
   Future<void> _fecharMes() async {
     if (_comprasMesAtual.isEmpty) return;
     final agora = DateTime.now();
@@ -433,6 +460,9 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
         return ComprasFuturasScreen(
           produtosAcabando: _produtosAcabando,
           onAdicionarCompra: _adicionarCompra,
+          onAdicionarProduto: _adicionarProdutoAcabando,
+          onAtualizarProduto: _atualizarProdutoAcabando,
+          onRemoverProduto: _removerProdutoAcabando,
         );
       case 2:
         return HistoricoScreen(historico: _historico);
