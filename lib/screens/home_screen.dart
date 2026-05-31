@@ -13,6 +13,7 @@ class HomeScreen extends StatelessWidget {
   final List<Compra> compras;
   final String mesAno;
   final ValueChanged<Compra> onAdicionarCompra;
+  final Future<void> Function(List<Compra>, List<Map<String, dynamic>>)? onAdicionarComprasNota;
   final ValueChanged<ProdutoAcabando> onMarcarAcabando;
   final ValueChanged<Compra> onEditarCompra;
   final VoidCallback? onFecharMes;
@@ -24,6 +25,7 @@ class HomeScreen extends StatelessWidget {
     required this.compras,
     required this.mesAno,
     required this.onAdicionarCompra,
+    this.onAdicionarComprasNota,
     required this.onMarcarAcabando,
     required this.onEditarCompra,
     this.onFecharMes,
@@ -57,7 +59,6 @@ class HomeScreen extends StatelessWidget {
   }
 
   Future<void> _abrirAdicionarCompra(BuildContext context) async {
-    // Pode retornar Compra (manual) ou List<Compra> (via QR Code)
     final resultado = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -70,8 +71,27 @@ class HomeScreen extends StatelessWidget {
 
     if (resultado is Compra) {
       onAdicionarCompra(resultado);
+    } else if (resultado is Map) {
+      // Retorno da nota fiscal com compras e dados de estoque
+      final comprasNota = resultado['compras'] as List<Compra>? ?? [];
+      final estoques = resultado['estoques'] as List<Map<String, dynamic>>? ?? [];
+
+      if (onAdicionarComprasNota != null && comprasNota.isNotEmpty) {
+        await onAdicionarComprasNota!(comprasNota, estoques);
+      }
+
+      if (context.mounted && comprasNota.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${comprasNota.length} produto(s) adicionado(s) da nota fiscal'),
+            backgroundColor: AppColors.accent,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     } else if (resultado is List<Compra>) {
-      // Adiciona todas as compras da nota fiscal
+      // Fallback para retorno antigo sem estoque
       for (final compra in resultado) {
         onAdicionarCompra(compra);
       }
@@ -252,8 +272,7 @@ class HomeScreen extends StatelessWidget {
 
             // Acoes
             ListTile(
-              leading: const Icon(Icons.add_circle_outline,
-                  color: AppColors.accent),
+              leading: const Icon(Icons.add_circle_outline, color: AppColors.accent),
               title: const Text('Adicionar Compra'),
               onTap: () {
                 Navigator.pop(context);
@@ -261,8 +280,7 @@ class HomeScreen extends StatelessWidget {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.list_alt_outlined,
-                  color: AppColors.accent),
+              leading: const Icon(Icons.list_alt_outlined, color: AppColors.accent),
               title: const Text('Ver Todas as Compras'),
               onTap: () {
                 Navigator.pop(context);
@@ -270,8 +288,7 @@ class HomeScreen extends StatelessWidget {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.lock_outline,
-                  color: AppColors.primaryDark),
+              leading: const Icon(Icons.lock_outline, color: AppColors.primaryDark),
               title: const Text('Fechar Mês'),
               subtitle: const Text('Mover para o histórico'),
               onTap: () {
@@ -279,7 +296,6 @@ class HomeScreen extends StatelessWidget {
                 _confirmarFecharMes(context);
               },
             ),
-
 
             const Divider(indent: 20, endIndent: 20),
 
@@ -327,7 +343,6 @@ class HomeScreen extends StatelessWidget {
         backgroundColor: AppColors.primaryDark,
         elevation: 0,
         centerTitle: false,
-        // Icone hamburguer abre o drawer automaticamente com leading padrao
         title: Text(
           'Minhas Compras - $mesAno',
           style: const TextStyle(
@@ -339,13 +354,11 @@ class HomeScreen extends StatelessWidget {
         ),
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
-          // Botao de fechar mes
           IconButton(
             icon: const Icon(Icons.lock_outline, color: Colors.white),
             tooltip: 'Fechar Mês',
             onPressed: () => _confirmarFecharMes(context),
           ),
-          // Botao de adicionar compra
           IconButton(
             icon: const Icon(Icons.add, color: Colors.white),
             tooltip: 'Adicionar Compra',
@@ -377,7 +390,6 @@ class HomeScreen extends StatelessWidget {
                         color: AppColors.textPrimary,
                       ),
                     ),
-                    // Botao "Ver todas" visivel apenas quando ha mais de 3 compras
                     if (compras.length > 3)
                       TextButton(
                         onPressed: () => _verTodasCompras(context),
@@ -408,8 +420,7 @@ class HomeScreen extends StatelessWidget {
                         .map(
                           (c) => CardCompra(
                             compra: c,
-                            onMarcarAcabando: () =>
-                                _marcarAcabando(context, c),
+                            onMarcarAcabando: () => _marcarAcabando(context, c),
                             onEditar: () => _abrirEditarCompra(context, c),
                             onRemover: onRemoverCompra != null
                                 ? () => onRemoverCompra!(c.id)
@@ -421,11 +432,9 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
 
-              // Botao ver todas abaixo da lista (sempre visivel se ha compras)
               if (compras.length > 3)
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(
@@ -497,8 +506,7 @@ class HomeScreen extends StatelessWidget {
                 child: Text(
                   'Sem\ndados',
                   textAlign: TextAlign.center,
-                  style:
-                      TextStyle(color: AppColors.textTertiary, fontSize: 14),
+                  style: TextStyle(color: AppColors.textTertiary, fontSize: 14),
                 ),
               ),
             ),

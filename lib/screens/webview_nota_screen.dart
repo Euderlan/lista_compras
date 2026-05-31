@@ -20,6 +20,9 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
   bool _notaCarregada = false;
   String _status = 'Aguarde...';
 
+  // Lista de dados de estoque extraídos da nota para rastreamento
+  final List<Map<String, dynamic>> _produtosEstoqueExtraidos = [];
+
   // JavaScript para o portal RJ (fazenda.rj.gov.br) e SEFAZ-MA
   static String get _jsExtrator {
     final sb = StringBuffer();
@@ -28,14 +31,12 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     sb.writeln('    var produtos = [];');
     sb.writeln('    var loja = "";');
 
-    // Nome da loja — varios seletores para cobrir ambos portais
     sb.writeln('    var lojaSelectors = [".txtTopo", "#u20", "#nomeEmitente", ".NomEmit", ".razaoSocial", "h2.text-center"];');
     sb.writeln('    for (var i = 0; i < lojaSelectors.length; i++) {');
     sb.writeln('      var el = document.querySelector(lojaSelectors[i]);');
     sb.writeln('      if (el && el.innerText.trim().length > 2) { loja = el.innerText.trim().substring(0,80); break; }');
     sb.writeln('    }');
 
-    // Padrao SEFAZ-MA/nacional: table#tabResult com span.txtTit
     sb.writeln('    var linhasMA = document.querySelectorAll("table#tabResult tr");');
     sb.writeln('    if (linhasMA.length > 0) {');
     sb.writeln('      linhasMA.forEach(function(linha) {');
@@ -59,7 +60,6 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     sb.writeln('      });');
     sb.writeln('    }');
 
-    // Padrao portal RJ: tabela com classe especifica
     sb.writeln('    if (produtos.length === 0) {');
     sb.writeln('      var linhasRJ = document.querySelectorAll("table.toItens tbody tr, .item-list tr, #tableItens tr");');
     sb.writeln('      linhasRJ.forEach(function(linha) {');
@@ -78,7 +78,6 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     sb.writeln('      });');
     sb.writeln('    }');
 
-    // Fallback geral: qualquer span.txtTit na pagina
     sb.writeln('    if (produtos.length === 0) {');
     sb.writeln('      document.querySelectorAll("span.txtTit").forEach(function(el) {');
     sb.writeln('        var nome = el.innerText.trim();');
@@ -103,17 +102,14 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     return sb.toString();
   }
 
-
   @override
   void initState() {
     super.initState();
     _inicializarWebView();
   }
 
-  // Extrai a chave de acesso de 44 digitos da URL do QR code
   String _extrairChave(String url) {
     try {
-      // Formato: ...?p=CHAVE44DIGITOS|...
       final uri = Uri.parse(url);
       final p = uri.queryParameters['p'] ?? '';
       if (p.isNotEmpty) {
@@ -121,11 +117,11 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
         if (partes.isNotEmpty && partes[0].length == 44) {
           return partes[0];
         }
-        // Tenta pegar os primeiros 44 digitos numericos
         final soNumeros = p.replaceAll(RegExp(r'[^0-9]'), '');
-        if (soNumeros.length >= 44) return soNumeros.substring(0, 44);
+        if (soNumeros.length >= 44) {
+          return soNumeros.substring(0, 44);
+        }
       }
-      // Tenta extrair chave diretamente da URL
       final match = RegExp(r'[0-9]{44}').firstMatch(url);
       return match?.group(0) ?? '';
     } catch (_) {
@@ -133,13 +129,11 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     }
   }
 
-  // Monta a URL do portal RJ com a chave de acesso
   String _montarUrlRJ(String urlOriginal) {
     final chave = _extrairChave(urlOriginal);
     if (chave.isNotEmpty) {
       return 'https://www.fazenda.rj.gov.br/nfce/consulta?p=$chave|2|1|1|';
     }
-    // Se nao encontrou chave, abre o portal direto
     return 'https://www.fazenda.rj.gov.br/nfce/consulta';
   }
 
@@ -160,7 +154,6 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
           }),
           onPageFinished: (url) {
             setState(() => _carregando = false);
-            // Tenta preencher o campo de chave automaticamente
             _preencherChaveRJ();
             _verificarSeNotaCarregou();
           },
@@ -173,16 +166,15 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
       ..loadRequest(Uri.parse(urlRJ));
   }
 
-  // Preenche automaticamente o campo de chave de acesso no portal RJ
   Future<void> _preencherChaveRJ() async {
     final chave = _extrairChave(widget.url);
-    if (chave.isEmpty) return;
+    if (chave.isEmpty) {
+      return;
+    }
 
     try {
-      // Aguarda um pouco para o DOM carregar completamente
       await Future.delayed(const Duration(milliseconds: 800));
 
-      // Preenche o campo de chave e clica em consultar
       await _controller.runJavaScript('''
         (function() {
           var inputs = document.querySelectorAll("input[type=text], input[type=search], input:not([type])");
@@ -199,7 +191,6 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
               break;
             }
           }
-          // Tenta tambem pelo primeiro input de texto vazio
           var allInputs = document.querySelectorAll("input[type=text]");
           if (allInputs.length > 0 && allInputs[0].value === "") {
             allInputs[0].value = "$chave";
@@ -211,11 +202,10 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     } catch (_) {}
   }
 
-  // Verifica se a pagina atual ja contem os dados da nota
   Future<void> _verificarSeNotaCarregou() async {
     try {
       final resultado = await _controller.runJavaScriptReturningResult(
-        'document.querySelector("table#tabResult") !== null ? "sim" : "nao"'
+        'document.querySelector("table#tabResult") !== null ? "sim" : "nao"',
       );
       final temTabela = resultado.toString().contains('sim');
       if (mounted) {
@@ -230,7 +220,9 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
   }
 
   Future<void> _extrairProdutos() async {
-    if (_extraindo) return;
+    if (_extraindo) {
+      return;
+    }
     setState(() {
       _extraindo = true;
       _status = 'Extraindo produtos...';
@@ -245,9 +237,13 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
           ? json.substring(1, json.length - 1).replaceAll(r'\"', '"')
           : json;
 
+      _produtosEstoqueExtraidos.clear();
+
       final compras = _parsearJson(jsonLimpo);
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       if (compras.isEmpty) {
         setState(() {
@@ -260,13 +256,37 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
       final confirmados = await Navigator.push<List<Compra>>(
         context,
         MaterialPageRoute(
-            builder: (_) => RevisarNotaScreen(compras: compras)),
+          builder: (_) => RevisarNotaScreen(compras: compras),
+        ),
       );
 
-      if (!mounted) return;
-      Navigator.pop(context, confirmados);
+      if (!mounted) {
+        return;
+      }
+
+      if (confirmados == null) {
+        setState(() {
+          _extraindo = false;
+          _status = 'Extração cancelada.';
+        });
+        return;
+      }
+
+      final nomesConfirmados =
+          confirmados.map((c) => c.nome.toLowerCase()).toSet();
+      final estoquesConfirmados = _produtosEstoqueExtraidos
+          .where((e) => nomesConfirmados
+              .contains((e['nome'] as String).toLowerCase()))
+          .toList();
+
+      Navigator.pop(context, {
+        'compras': confirmados,
+        'estoques': estoquesConfirmados,
+      });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       setState(() {
         _extraindo = false;
         _status = 'Erro ao extrair. Tente novamente.';
@@ -279,7 +299,9 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     try {
       final produtosMatch =
           RegExp(r'"produtos":\[(.*?)\]', dotAll: true).firstMatch(json);
-      if (produtosMatch == null) return [];
+      if (produtosMatch == null) {
+        return [];
+      }
 
       final lojaMatch = RegExp(r'"loja":"([^"]*)"').firstMatch(json);
       final loja = lojaMatch?.group(1) ?? 'Nota Fiscal';
@@ -299,17 +321,31 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
             0.0;
 
         if (nome.isNotEmpty && preco > 0) {
+          final nomeCapitalizado = _capitalizar(nome);
+          final categoria = _inferirCategoria(nome);
+
           compras.add(Compra(
             id: DateTime.now().millisecondsSinceEpoch.toString() +
                 compras.length.toString(),
-            nome: _capitalizar(nome),
+            nome: nomeCapitalizado,
             preco: preco,
             quantidade: qtd,
-            categoria: _inferirCategoria(nome),
+            categoria: categoria,
             loja: loja.isNotEmpty ? loja : 'Nota Fiscal',
             data: DateTime.now(),
             marcado: false,
           ));
+
+          final unidade = _inferirUnidade(nome);
+          final pesoUnitario = _inferirPesoUnitario(nome, unidade);
+
+          _produtosEstoqueExtraidos.add({
+            'nome': nomeCapitalizado,
+            'categoria': categoria,
+            'quantidade': qtd.toDouble(),
+            'unidade': unidade,
+            'peso_unitario': pesoUnitario,
+          });
         }
       }
     } catch (_) {}
@@ -326,13 +362,69 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
 
   Categoria _inferirCategoria(String nome) {
     final n = nome.toLowerCase();
-    if (RegExp(r'sabonete|shampoo|condicionador|pasta dent|escova|desodorante|absorvente|fralda|papel higi|detergente|sabao|amaciante|alcool|curativo')
-        .hasMatch(n)) return Categoria.higiene;
-    if (RegExp(r'fruta|legume|verdura|cenoura|tomate|alface|cebola|batata|banana|maca|laranja|limao|mamao|abacate|uva|morango|brocolis|couve|pepino')
-        .hasMatch(n)) return Categoria.hortifruti;
-    if (RegExp(r'arroz|feijao|macarrao|oleo|sal |acucar|cafe|leite|manteiga|margarina|queijo|iogurte|carne|frango|peixe|ovo |pao|biscoito|farinha|molho|refrigerante|suco|agua')
-        .hasMatch(n)) return Categoria.mercado;
+    if (RegExp(
+      r'sabonete|shampoo|condicionador|pasta dent|escova|desodorante|absorvente|fralda|papel higi|detergente|sabao|amaciante|alcool|curativo',
+    ).hasMatch(n)) {
+      return Categoria.higiene;
+    }
+    if (RegExp(
+      r'fruta|legume|verdura|cenoura|tomate|alface|cebola|batata|banana|maca|laranja|limao|mamao|abacate|uva|morango|brocolis|couve|pepino',
+    ).hasMatch(n)) {
+      return Categoria.hortifruti;
+    }
+    if (RegExp(
+      r'arroz|feijao|macarrao|oleo|sal |acucar|cafe|leite|manteiga|margarina|queijo|iogurte|carne|frango|peixe|ovo |pao|biscoito|farinha|molho|refrigerante|suco|agua',
+    ).hasMatch(n)) {
+      return Categoria.mercado;
+    }
     return Categoria.outros;
+  }
+
+  String _inferirUnidade(String nome) {
+    final n = nome.toLowerCase();
+    if (RegExp(r'\bkg\b|quilo').hasMatch(n)) {
+      return 'kg';
+    }
+    if (RegExp(r'\bml\b|mililitro').hasMatch(n)) {
+      return 'ml';
+    }
+    if (RegExp(r'\bl\b|litro|\blt\b').hasMatch(n)) {
+      return 'L';
+    }
+    if (RegExp(r'\bg\b|grama').hasMatch(n)) {
+      return 'g';
+    }
+    return 'un';
+  }
+
+  double _inferirPesoUnitario(String nome, String unidade) {
+    final n = nome.toLowerCase();
+
+    final match = RegExp(
+      r'(\d+[\.,]?\d*)\s*(kg|g|l|ml|lt)',
+      caseSensitive: false,
+    ).firstMatch(n);
+
+    if (match != null) {
+      final valor =
+          double.tryParse(match.group(1)!.replaceAll(',', '.')) ?? 1.0;
+      final unidadeEncontrada = match.group(2)!.toLowerCase();
+      if (unidadeEncontrada == 'kg') {
+        return valor * 1000;
+      }
+      if (unidadeEncontrada == 'l' || unidadeEncontrada == 'lt') {
+        return valor * 1000;
+      }
+      return valor;
+    }
+
+    switch (unidade) {
+      case 'kg': { return 1000; }
+      case 'L': { return 1000; }
+      case 'ml': { return 250; }
+      case 'g': { return 500; }
+      default: { return 100; }
+    }
   }
 
   @override
@@ -342,7 +434,11 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
         backgroundColor: AppColors.primaryDark,
         title: const Text(
           'Nota Fiscal',
-          style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         centerTitle: true,
         leading: IconButton(
@@ -359,7 +455,6 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
       ),
       body: Column(
         children: [
-          // Barra de status informando o usuario o que fazer
           AnimatedContainer(
             duration: const Duration(milliseconds: 300),
             color: _notaCarregada ? AppColors.accent : Colors.orange.shade700,
@@ -367,7 +462,9 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
             child: Row(
               children: [
                 Icon(
-                  _notaCarregada ? Icons.check_circle_outline : Icons.info_outline,
+                  _notaCarregada
+                      ? Icons.check_circle_outline
+                      : Icons.info_outline,
                   color: Colors.white,
                   size: 18,
                 ),
@@ -380,20 +477,22 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
                 ),
                 if (_carregando)
                   const SizedBox(
-                    width: 16, height: 16,
-                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
                   ),
               ],
             ),
           ),
 
-          // WebView ocupando o espaco disponivel
           Expanded(
             child: Stack(
               children: [
                 WebViewWidget(controller: _controller),
 
-                // Loading overlay ao extrair
                 if (_extraindo)
                   Container(
                     color: Colors.black.withValues(alpha: 0.6),
@@ -408,11 +507,16 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
                         child: const Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            CircularProgressIndicator(color: AppColors.primaryDark),
+                            CircularProgressIndicator(
+                              color: AppColors.primaryDark,
+                            ),
                             SizedBox(height: 16),
                             Text(
                               'Extraindo produtos da nota...',
-                              style: TextStyle(fontSize: 15, color: AppColors.textPrimary),
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: AppColors.textPrimary,
+                              ),
                             ),
                           ],
                         ),
@@ -423,7 +527,6 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
             ),
           ),
 
-          // Botao fixo na parte inferior — usuario clica apos resolver CAPTCHA
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -435,13 +538,19 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
                   icon: const Icon(Icons.shopping_cart_outlined),
                   label: Text(
                     _extraindo ? 'Extraindo...' : 'Extrair Produtos da Nota',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryDark,
                     foregroundColor: Colors.white,
-                    disabledBackgroundColor: AppColors.primaryDark.withValues(alpha: 0.5),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    disabledBackgroundColor:
+                        AppColors.primaryDark.withValues(alpha: 0.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ),

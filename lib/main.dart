@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'theme/app_theme.dart';
 import 'models/compra.dart';
 import 'models/produto_acabando.dart';
+import 'models/produto_estoque.dart';
 import 'screens/home_screen.dart';
 import 'screens/historico_screen.dart';
 import 'screens/compras_futuras_screen.dart';
@@ -12,7 +13,10 @@ import 'services/auth_service.dart';
 import 'services/compras_service.dart';
 import 'services/produtos_acabando_service.dart';
 import 'services/historico_service.dart';
+import 'services/produto_estoque_service.dart';
+import 'services/notificacao_estoque_service.dart';
 import 'widgets/app_bottom_nav_bar.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -104,6 +108,8 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   final _comprasService = ComprasService();
   final _produtosService = ProdutosAcabandoService();
   final _historicoService = HistoricoService();
+  final _estoqueService = ProdutoEstoqueService();
+  final _notificacaoService = NotificacaoEstoqueService();
 
   final String _mesAno = _obterMesAno();
 
@@ -120,6 +126,126 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   void initState() {
     super.initState();
     _carregarDados();
+    _migrarDadosAntigos();
+    _verificarMudancaDeMes();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verificarEstoques();
+    });
+  }
+
+  Future<void> _verificarEstoques() async {
+    if (!mounted) return;
+    await _notificacaoService.verificarENotificar(
+      context: context,
+      mesAno: _mesAno,
+      onProdutoAcabou: _adicionarProdutoAcabando,
+    );
+  }
+
+  Future<void> _verificarMudancaDeMes() async {
+    final prefs = await SharedPreferences.getInstance();
+    final mesAnoSalvo = prefs.getString('ultimo_mes_ano');
+
+    if (mesAnoSalvo != null && mesAnoSalvo != _mesAno) {
+      await _fecharMesAutomatico(mesAnoSalvo);
+    }
+
+    await prefs.setString('ultimo_mes_ano', _mesAno);
+  }
+
+  Future<void> _migrarDadosAntigos() async {
+    final prefs = await SharedPreferences.getInstance();
+    final migrado = prefs.getBool('migracao_meses_antigos_v1') ?? false;
+    if (migrado) return;
+
+    try {
+      final response = await Supabase.instance.client
+          .from('compras')
+          .select('mes_ano')
+          .eq('usuario_id', Supabase.instance.client.auth.currentUser!.id);
+
+      final meses = (response as List)
+          .map((r) => r['mes_ano'] as String)
+          .toSet()
+          .where((m) => m != _mesAno)
+          .toList();
+
+      for (final mesAno in meses) {
+        final compras = await _comprasService.buscarComprasMes(mesAno);
+        if (compras.isEmpty) continue;
+
+        final partes = mesAno.split(' ');
+        final mes = partes[0];
+        final ano = int.tryParse(partes[1]) ?? DateTime.now().year;
+        final totalGasto = compras.fold<double>(0, (s, c) => s + c.total);
+
+        final jaExiste = _historico.any((h) => h.mes == mes && h.ano == ano);
+        if (jaExiste) continue;
+
+        final resumo = ResumoMes(
+          mes: mes,
+          ano: ano,
+          totalGasto: totalGasto,
+          totalCompras: compras.length,
+          concluido: true,
+        );
+
+        await _historicoService.salvarResumoMes(resumo);
+        await _comprasService.removerComprasMes(mesAno);
+      }
+
+      await prefs.setBool('migracao_meses_antigos_v1', true);
+
+      final historicoAtualizado = await _historicoService.buscarHistorico();
+      if (mounted) {
+        setState(() {
+          _historico = historicoAtualizado;
+        });
+      }
+    } catch (e) {
+      // Falha silenciosa — tenta novamente na próxima abertura
+    }
+  }
+
+  Future<void> _fecharMesAutomatico(String mesAnoAnterior) async {
+    try {
+      final comprasAntigas =
+          await _comprasService.buscarComprasMes(mesAnoAnterior);
+      if (comprasAntigas.isEmpty) return;
+
+      final partes = mesAnoAnterior.split(' ');
+      final mes = partes[0];
+      final ano = int.tryParse(partes[1]) ?? DateTime.now().year;
+      final totalGasto = comprasAntigas.fold<double>(0, (s, c) => s + c.total);
+
+      final resumo = ResumoMes(
+        mes: mes,
+        ano: ano,
+        totalGasto: totalGasto,
+        totalCompras: comprasAntigas.length,
+        concluido: true,
+      );
+
+      await _historicoService.salvarResumoMes(resumo);
+      await _comprasService.removerComprasMes(mesAnoAnterior);
+
+      if (mounted) {
+        setState(() {
+          _historico.insert(0, resumo);
+          _abaAtual = 2;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Mês anterior fechado automaticamente! Confira o histórico.'),
+          backgroundColor: Color(0xFF2D5016),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 4),
+        ));
+      }
+    } catch (e) {
+      // Falha silenciosa — não interrompe o usuário
+    }
   }
 
   Future<void> _carregarDados() async {
@@ -158,6 +284,36 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
         ));
+      }
+    }
+  }
+
+  // Salva compras da nota fiscal e registra no estoque para rastreamento
+  Future<void> _adicionarComprasNota(
+    List<Compra> compras,
+    List<Map<String, dynamic>> estoques,
+  ) async {
+    for (final compra in compras) {
+      await _adicionarCompra(compra);
+    }
+
+    // Registra cada produto no estoque para rastreamento de quando vai acabar
+    for (final dadosEstoque in estoques) {
+      try {
+        final produto = ProdutoEstoque(
+          id: '',
+          usuarioId: '',
+          nome: dadosEstoque['nome'] as String,
+          categoria: dadosEstoque['categoria'] as Categoria,
+          quantidade: (dadosEstoque['quantidade'] as num).toDouble(),
+          unidade: dadosEstoque['unidade'] as String,
+          pesoUnitario: (dadosEstoque['peso_unitario'] as num).toDouble(),
+          dataCompra: DateTime.now(),
+          mesAno: _mesAno,
+        );
+        await _estoqueService.adicionarProduto(produto);
+      } catch (_) {
+        // Falha silenciosa — não impede o fluxo principal
       }
     }
   }
@@ -220,6 +376,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
     try {
       await _historicoService.salvarResumoMes(resumo);
       await _comprasService.removerComprasMes(_mesAno);
+      await _estoqueService.removerProdutosMes(_mesAno);
       setState(() {
         _historico.insert(0, resumo);
         _comprasMesAtual.clear();
@@ -254,7 +411,9 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
     if (_carregandoDados) {
       return const Scaffold(
         backgroundColor: Color(0xFFF5F5F0),
-        body: Center(child: CircularProgressIndicator(color: Color(0xFF2D5016))),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF2D5016)),
+        ),
       );
     }
     switch (_abaAtual) {
@@ -263,6 +422,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
           compras: _comprasMesAtual,
           mesAno: _mesAno,
           onAdicionarCompra: _adicionarCompra,
+          onAdicionarComprasNota: _adicionarComprasNota,
           onMarcarAcabando: _adicionarProdutoAcabando,
           onEditarCompra: _editarCompra,
           onFecharMes: _fecharMes,
@@ -281,6 +441,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
           compras: _comprasMesAtual,
           mesAno: _mesAno,
           onAdicionarCompra: _adicionarCompra,
+          onAdicionarComprasNota: _adicionarComprasNota,
           onMarcarAcabando: _adicionarProdutoAcabando,
           onEditarCompra: _editarCompra,
           onFecharMes: _fecharMes,
