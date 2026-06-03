@@ -4,6 +4,7 @@ import '../models/produto_acabando.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_header.dart';
 import 'adicionar_produto_futuro_screen.dart';
+import '../services/whatsapp_service.dart';
 
 class ComprasFuturasScreen extends StatefulWidget {
   final List<ProdutoAcabando> produtosAcabando;
@@ -141,6 +142,18 @@ class _ComprasFuturasScreenState extends State<ComprasFuturasScreen> {
       appBar: AppHeader(
         titulo: 'Compras Futuras',
         actions: [
+          IconButton(
+            icon: const Icon(
+            Icons.share,
+            color: Colors.white,
+          ),
+          tooltip: 'Enviar para WhatsApp',
+          onPressed: widget.produtosAcabando.isEmpty
+              ? null
+              : () => WhatsAppService.compartilharLista(
+                    widget.produtosAcabando,
+                  ),
+        ),
           TextButton(
             onPressed: _adicionarManual,
             child: const Text(
