@@ -17,9 +17,14 @@ import 'services/produto_estoque_service.dart';
 import 'services/notificacao_estoque_service.dart';
 import 'widgets/app_bottom_nav_bar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp();         
+  await NotificationService.inicializar();
 
   await Supabase.initialize(
     url: 'https://saipamdfykhvniozhndl.supabase.co',
@@ -128,6 +133,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
     _carregarDados();
     _migrarDadosAntigos();
     _verificarMudancaDeMes();
+    NotificationService.salvarToken();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _verificarEstoques();
     });
@@ -429,6 +435,7 @@ Future<void> _removerProdutoAcabando(String id) async {
   }
 
   Future<void> _logout() async {
+    await NotificationService.removerToken();
     await _authService.sair();
   }
 
