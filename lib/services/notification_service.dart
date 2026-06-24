@@ -1,12 +1,11 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 // Handler para mensagens em background (deve ser top-level)
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // Não precisa fazer nada aqui — a notificação já aparece automaticamente
+  // Não precisa fazer nada — a notificação já aparece automaticamente na barra
 }
 
 class NotificationService {
@@ -14,7 +13,6 @@ class NotificationService {
   static final _localNotifications = FlutterLocalNotificationsPlugin();
   static final _supabase = Supabase.instance.client;
 
-  // Canal Android para notificações de estoque
   static const _channel = AndroidNotificationChannel(
     'estoque_channel',
     'Avisos de Estoque',
@@ -22,7 +20,6 @@ class NotificationService {
     importance: Importance.high,
   );
 
-  // Inicializa tudo — chame no main() antes do runApp
   static Future<void> inicializar() async {
     // Solicita permissão
     await _messaging.requestPermission(
@@ -37,7 +34,7 @@ class NotificationService {
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(_channel);
 
-    // Inicializa notificações locais
+    // Inicializa notificações locais (necessário para o canal existir)
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings();
@@ -51,10 +48,15 @@ class NotificationService {
     // Handler para mensagens em background
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
-    // Handler para mensagens com app aberto
+    // Quando o app está em FOREGROUND (aberto), o Android por padrão
+    // não mostra a notificação na barra — precisamos exibir via local notification.
+    // O iOS já mostra automaticamente.
     FirebaseMessaging.onMessage.listen((message) {
       final notification = message.notification;
-      if (notification != null) {
+      final android = message.notification?.android;
+
+      // Exibe na barra de notificação mesmo com o app aberto
+      if (notification != null && android != null) {
         _localNotifications.show(
           notification.hashCode,
           notification.title,
@@ -66,11 +68,21 @@ class NotificationService {
               channelDescription: _channel.description,
               importance: Importance.high,
               priority: Priority.high,
+              // Não abre diálogo — apenas mostra na barra
+              fullScreenIntent: false,
             ),
           ),
         );
       }
+      // iOS já exibe automaticamente na barra quando configurado corretamente
     });
+
+    // Configura apresentação das notificações no iOS com app aberto
+    await _messaging.setForegroundNotificationPresentationOptions(
+      alert: true,  // mostra banner
+      badge: true,
+      sound: true,
+    );
   }
 
   // Salva o token FCM do dispositivo no Supabase

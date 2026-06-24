@@ -20,10 +20,12 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
   bool _notaCarregada = false;
   String _status = 'Aguarde...';
 
-  // Lista de dados de estoque extraídos da nota para rastreamento
   final List<Map<String, dynamic>> _produtosEstoqueExtraidos = [];
 
-  // JavaScript para o portal RJ (fazenda.rj.gov.br) e SEFAZ-MA
+  // JavaScript extrator corrigido:
+  // - Captura o preço TOTAL do item (qtd × unit), não o preço unitário por kg
+  // - Prioriza o campo de valor total da linha (span.valor / RvlTot)
+  // - Fallback: qtd × preçoUnit apenas quando não existe total explícito
   static String get _jsExtrator {
     final sb = StringBuffer();
     sb.writeln('(function() {');
@@ -31,12 +33,14 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     sb.writeln('    var produtos = [];');
     sb.writeln('    var loja = "";');
 
+    // Nome da loja
     sb.writeln('    var lojaSelectors = [".txtTopo", "#u20", "#nomeEmitente", ".NomEmit", ".razaoSocial", "h2.text-center"];');
     sb.writeln('    for (var i = 0; i < lojaSelectors.length; i++) {');
     sb.writeln('      var el = document.querySelector(lojaSelectors[i]);');
     sb.writeln('      if (el && el.innerText.trim().length > 2) { loja = el.innerText.trim().substring(0,80); break; }');
     sb.writeln('    }');
 
+    // ---- Portal SEFAZ-MA / padrão nacional (table#tabResult) ----
     sb.writeln('    var linhasMA = document.querySelectorAll("table#tabResult tr");');
     sb.writeln('    if (linhasMA.length > 0) {');
     sb.writeln('      linhasMA.forEach(function(linha) {');
@@ -44,22 +48,47 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     sb.writeln('        if (!nomeEl) return;');
     sb.writeln('        var nome = nomeEl.innerText.trim();');
     sb.writeln('        if (!nome || nome.length < 2) return;');
+
+    // Quantidade
     sb.writeln('        var qtdEl = linha.querySelector("span.Rqtd");');
     sb.writeln('        var qtdTxt = qtdEl ? qtdEl.innerText.replace("Qtde.:","").trim() : "1";');
-    sb.writeln('        var qtd = parseInt(qtdTxt) || 1;');
-    sb.writeln('        var valorEl = linha.querySelector("span.RvlUnit");');
-    sb.writeln('        var valorTxt = valorEl ? valorEl.innerText.replace("Vl. Unit.:","").trim() : "0";');
-    sb.writeln('        valorTxt = valorTxt.split(".").join("").split(",").join(".");');
-    sb.writeln('        var valor = parseFloat(valorTxt) || 0;');
-    sb.writeln('        if (valor === 0) {');
-    sb.writeln('          var totalEl = linha.querySelector("span.valor");');
-    sb.writeln('          var totalTxt = totalEl ? totalEl.innerText.split(".").join("").split(",").join(".") : "0";');
-    sb.writeln('          valor = parseFloat(totalTxt) / qtd || 0;');
+    sb.writeln('        qtdTxt = qtdTxt.split(".").join("").split(",").join(".");');
+    sb.writeln('        var qtd = parseFloat(qtdTxt) || 1;');
+
+    // PREÇO TOTAL do item — prioridade: RvlTot > span.valor > qtd*unitário
+    // RvlTot = "Vl. Tot." presente nas NFCe nacionais
+    sb.writeln('        var totalEl = linha.querySelector("span.RvlTot");');
+    sb.writeln('        var totalTxt = totalEl ? totalEl.innerText.replace("Vl. Tot.:","").trim() : "";');
+    sb.writeln('        totalTxt = totalTxt.split(".").join("").split(",").join(".");');
+    sb.writeln('        var totalItem = parseFloat(totalTxt) || 0;');
+
+    // Fallback 1: span.valor genérico
+    sb.writeln('        if (totalItem <= 0) {');
+    sb.writeln('          var valorEl = linha.querySelector("span.valor");');
+    sb.writeln('          var vTxt = valorEl ? valorEl.innerText.split(".").join("").split(",").join(".") : "";');
+    sb.writeln('          totalItem = parseFloat(vTxt) || 0;');
     sb.writeln('        }');
-    sb.writeln('        if (valor > 0) produtos.push({ nome: nome.substring(0,100), quantidade: qtd, preco: parseFloat(valor.toFixed(2)) });');
+
+    // Fallback 2: qtd × preço unitário (quando não há total explícito)
+    sb.writeln('        if (totalItem <= 0) {');
+    sb.writeln('          var unitEl = linha.querySelector("span.RvlUnit");');
+    sb.writeln('          var uTxt = unitEl ? unitEl.innerText.replace("Vl. Unit.:","").trim() : "0";');
+    sb.writeln('          uTxt = uTxt.split(".").join("").split(",").join(".");');
+    sb.writeln('          var unitVal = parseFloat(uTxt) || 0;');
+    sb.writeln('          totalItem = parseFloat((qtd * unitVal).toFixed(2));');
+    sb.writeln('        }');
+
+    // Quantidade inteira para unidades, decimal para peso (ex: 0.543 kg)
+    // Armazena qtd real e preço total; o preço unitário será total/qtd
+    sb.writeln('        if (totalItem > 0) {');
+    sb.writeln('          var qtdInt = Math.round(qtd) >= 1 ? Math.round(qtd) : 1;');
+    sb.writeln('          var precoUnit = parseFloat((totalItem / qtd).toFixed(2));');
+    sb.writeln('          produtos.push({ nome: nome.substring(0,100), quantidade: qtdInt, preco: precoUnit, total: parseFloat(totalItem.toFixed(2)) });');
+    sb.writeln('        }');
     sb.writeln('      });');
     sb.writeln('    }');
 
+    // ---- Portal RJ e outros (tabelas genéricas) ----
     sb.writeln('    if (produtos.length === 0) {');
     sb.writeln('      var linhasRJ = document.querySelectorAll("table.toItens tbody tr, .item-list tr, #tableItens tr");');
     sb.writeln('      linhasRJ.forEach(function(linha) {');
@@ -68,29 +97,43 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     sb.writeln('        var nome = cells[0].innerText.trim();');
     sb.writeln('        if (!nome || nome.length < 2) return;');
     sb.writeln('        var qtd = 1;');
-    sb.writeln('        var valor = 0;');
+    sb.writeln('        var valores = [];');
     sb.writeln('        for (var c = 1; c < cells.length; c++) {');
     sb.writeln('          var t = cells[c].innerText.trim().split(".").join("").split(",").join(".");');
     sb.writeln('          var n = parseFloat(t);');
-    sb.writeln('          if (n > 0 && n < 100000) { valor = n; }');
+    sb.writeln('          if (n > 0 && n < 100000) valores.push(n);');
     sb.writeln('        }');
-    sb.writeln('        if (valor > 0) produtos.push({ nome: nome.substring(0,100), quantidade: qtd, preco: parseFloat(valor.toFixed(2)) });');
+    // Heurística: o maior valor numérico de uma linha tende a ser o total
+    sb.writeln('        if (valores.length > 0) {');
+    sb.writeln('          var totalItem = Math.max.apply(null, valores);');
+    sb.writeln('          produtos.push({ nome: nome.substring(0,100), quantidade: qtd, preco: parseFloat(totalItem.toFixed(2)), total: parseFloat(totalItem.toFixed(2)) });');
+    sb.writeln('        }');
     sb.writeln('      });');
     sb.writeln('    }');
 
+    // ---- Fallback genérico por span.txtTit ----
     sb.writeln('    if (produtos.length === 0) {');
     sb.writeln('      document.querySelectorAll("span.txtTit").forEach(function(el) {');
     sb.writeln('        var nome = el.innerText.trim();');
     sb.writeln('        if (!nome || nome.length < 2) return;');
     sb.writeln('        var container = el.closest("tr, li, .item");');
     sb.writeln('        if (!container) return;');
-    sb.writeln('        var valor = 0;');
-    sb.writeln('        container.querySelectorAll("span.valor, span.RvlUnit, td").forEach(function(v) {');
-    sb.writeln('          var t = v.innerText.trim().split(".").join("").split(",").join(".");');
-    sb.writeln('          var n = parseFloat(t);');
-    sb.writeln('          if (n > 0 && valor === 0) valor = n;');
-    sb.writeln('        });');
-    sb.writeln('        if (valor > 0) produtos.push({ nome: nome.substring(0,100), quantidade: 1, preco: valor });');
+    sb.writeln('        var totalItem = 0;');
+    // Tenta RvlTot primeiro
+    sb.writeln('        var totEl = container.querySelector("span.RvlTot");');
+    sb.writeln('        if (totEl) {');
+    sb.writeln('          var tTxt = totEl.innerText.replace("Vl. Tot.:","").trim().split(".").join("").split(",").join(".");');
+    sb.writeln('          totalItem = parseFloat(tTxt) || 0;');
+    sb.writeln('        }');
+    // Fallback span.valor
+    sb.writeln('        if (totalItem <= 0) {');
+    sb.writeln('          container.querySelectorAll("span.valor, td").forEach(function(v) {');
+    sb.writeln('            var t = v.innerText.trim().split(".").join("").split(",").join(".");');
+    sb.writeln('            var n = parseFloat(t);');
+    sb.writeln('            if (n > 0 && totalItem === 0) totalItem = n;');
+    sb.writeln('          });');
+    sb.writeln('        }');
+    sb.writeln('        if (totalItem > 0) produtos.push({ nome: nome.substring(0,100), quantidade: 1, preco: totalItem, total: totalItem });');
     sb.writeln('      });');
     sb.writeln('    }');
 
@@ -168,13 +211,10 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
 
   Future<void> _preencherChaveRJ() async {
     final chave = _extrairChave(widget.url);
-    if (chave.isEmpty) {
-      return;
-    }
+    if (chave.isEmpty) return;
 
     try {
       await Future.delayed(const Duration(milliseconds: 800));
-
       await _controller.runJavaScript('''
         (function() {
           var inputs = document.querySelectorAll("input[type=text], input[type=search], input:not([type])");
@@ -220,9 +260,7 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
   }
 
   Future<void> _extrairProdutos() async {
-    if (_extraindo) {
-      return;
-    }
+    if (_extraindo) return;
     setState(() {
       _extraindo = true;
       _status = 'Extraindo produtos...';
@@ -239,11 +277,9 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
 
       _produtosEstoqueExtraidos.clear();
 
-      final compras = _parsearJson(jsonLimpo);
+      final compras = _parsearEAgrupar(jsonLimpo);
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       if (compras.isEmpty) {
         setState(() {
@@ -260,9 +296,7 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
         ),
       );
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       if (confirmados == null) {
         setState(() {
@@ -284,9 +318,7 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
         'estoques': estoquesConfirmados,
       });
     } catch (e) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _extraindo = false;
         _status = 'Erro ao extrair. Tente novamente.';
@@ -294,63 +326,171 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     }
   }
 
-  List<Compra> _parsearJson(String json) {
+  // ─── Parsing + agrupamento ───────────────────────────────────────────────
+
+  /// Parseia o JSON retornado pelo JS e agrupa produtos iguais/similares.
+  /// Regras:
+  ///  1. Mesmo nome normalizado → soma quantidades, recalcula preço unitário.
+  ///  2. Nomes similares (≥60% palavras em comum) → agrupa como mesmo produto,
+  ///     usa o nome do primeiro encontrado, soma quantidades.
+  List<Compra> _parsearEAgrupar(String json) {
+    // ── 1. Extrai lista bruta ────────────────────────────────────────────────
+    final brutos = _extrairBrutos(json);
+    if (brutos.isEmpty) return [];
+
+    // ── 2. Agrupa produtos iguais/similares ──────────────────────────────────
+    // Cada grupo: { nome, totalGeral, qtdGeral }
+    final grupos = <_GrupoProduto>[];
+
+    for (final item in brutos) {
+      final nomeNorm = _normalizar(item.nome);
+      // Tenta encontrar grupo compatível
+      _GrupoProduto? grupoAlvo;
+      for (final g in grupos) {
+        if (_saoSimilares(nomeNorm, g.nomeNormalizado)) {
+          grupoAlvo = g;
+          break;
+        }
+      }
+      if (grupoAlvo != null) {
+        grupoAlvo.totalGeral += item.total;
+        grupoAlvo.qtdGeral += item.qtd;
+      } else {
+        grupos.add(_GrupoProduto(
+          nomeOriginal: item.nome,
+          nomeNormalizado: nomeNorm,
+          totalGeral: item.total,
+          qtdGeral: item.qtd,
+        ));
+      }
+    }
+
+    // ── 3. Converte grupos em Compra ─────────────────────────────────────────
     final compras = <Compra>[];
+    final lojaMatch = RegExp(r'"loja":"([^"]*)"').firstMatch(json);
+    final loja = lojaMatch?.group(1) ?? 'Nota Fiscal';
+
+    for (final g in grupos) {
+      final qtdInt = g.qtdGeral.round().clamp(1, 9999);
+      // Preço unitário = total / qtd (evita distorção por peso)
+      final precoUnit = double.parse((g.totalGeral / g.qtdGeral).toStringAsFixed(2));
+      final nomeCapitalizado = _capitalizar(g.nomeOriginal);
+      final categoria = _inferirCategoria(g.nomeOriginal);
+
+      compras.add(Compra(
+        id: DateTime.now().millisecondsSinceEpoch.toString() +
+            compras.length.toString(),
+        nome: nomeCapitalizado,
+        preco: precoUnit,
+        quantidade: qtdInt,
+        categoria: categoria,
+        loja: loja.isNotEmpty ? loja : 'Nota Fiscal',
+        data: DateTime.now(),
+        marcado: false,
+      ));
+
+      final unidade = _inferirUnidade(g.nomeOriginal);
+      final pesoUnitario = _inferirPesoUnitario(g.nomeOriginal, unidade);
+
+      _produtosEstoqueExtraidos.add({
+        'nome': nomeCapitalizado,
+        'categoria': categoria,
+        'quantidade': qtdInt.toDouble(),
+        'unidade': unidade,
+        'peso_unitario': pesoUnitario,
+      });
+    }
+
+    return compras;
+  }
+
+  /// Extrai a lista bruta de {nome, qtd, total} do JSON retornado pelo JS.
+  List<_ItemBruto> _extrairBrutos(String json) {
+    final items = <_ItemBruto>[];
     try {
       final produtosMatch =
           RegExp(r'"produtos":\[(.*?)\]', dotAll: true).firstMatch(json);
-      if (produtosMatch == null) {
-        return [];
-      }
-
-      final lojaMatch = RegExp(r'"loja":"([^"]*)"').firstMatch(json);
-      final loja = lojaMatch?.group(1) ?? 'Nota Fiscal';
+      if (produtosMatch == null) return [];
 
       for (final itemMatch
           in RegExp(r'\{[^}]+\}').allMatches(produtosMatch.group(1) ?? '')) {
         final item = itemMatch.group(0) ?? '';
         final nome =
             RegExp(r'"nome":"([^"]*)"').firstMatch(item)?.group(1) ?? '';
-        final qtd = int.tryParse(
-                RegExp(r'"quantidade":(\d+)').firstMatch(item)?.group(1) ??
+        final qtd = double.tryParse(
+                RegExp(r'"quantidade":([\d.]+)').firstMatch(item)?.group(1) ??
                     '1') ??
-            1;
-        final preco = double.tryParse(
-                RegExp(r'"preco":([\d.]+)').firstMatch(item)?.group(1) ??
-                    '0') ??
-            0.0;
+            1.0;
 
-        if (nome.isNotEmpty && preco > 0) {
-          final nomeCapitalizado = _capitalizar(nome);
-          final categoria = _inferirCategoria(nome);
+        // Tenta pegar o total primeiro; se não existir usa preco (que no JS já
+        // é o total quando qtd==1, mas pode ser unitário em outros casos)
+        final totalStr =
+            RegExp(r'"total":([\d.]+)').firstMatch(item)?.group(1);
+        final precoStr =
+            RegExp(r'"preco":([\d.]+)').firstMatch(item)?.group(1);
 
-          compras.add(Compra(
-            id: DateTime.now().millisecondsSinceEpoch.toString() +
-                compras.length.toString(),
-            nome: nomeCapitalizado,
-            preco: preco,
-            quantidade: qtd,
-            categoria: categoria,
-            loja: loja.isNotEmpty ? loja : 'Nota Fiscal',
-            data: DateTime.now(),
-            marcado: false,
-          ));
+        double total = 0;
+        if (totalStr != null) {
+          total = double.tryParse(totalStr) ?? 0;
+        } else if (precoStr != null) {
+          final preco = double.tryParse(precoStr) ?? 0;
+          total = double.parse((preco * qtd).toStringAsFixed(2));
+        }
 
-          final unidade = _inferirUnidade(nome);
-          final pesoUnitario = _inferirPesoUnitario(nome, unidade);
-
-          _produtosEstoqueExtraidos.add({
-            'nome': nomeCapitalizado,
-            'categoria': categoria,
-            'quantidade': qtd.toDouble(),
-            'unidade': unidade,
-            'peso_unitario': pesoUnitario,
-          });
+        if (nome.isNotEmpty && total > 0) {
+          items.add(_ItemBruto(nome: nome, qtd: qtd, total: total));
         }
       }
     } catch (_) {}
-    return compras;
+    return items;
   }
+
+  // ─── Similaridade de nomes ───────────────────────────────────────────────
+
+  /// Retorna true se os dois nomes normalizados são iguais ou similares.
+  /// Critérios (em ordem):
+  ///  1. Igualdade exata após normalização.
+  ///  2. Um contém o outro (ex: "Arroz 5kg" ↔ "Arroz").
+  ///  3. ≥60% de palavras significativas em comum.
+  bool _saoSimilares(String a, String b) {
+    if (a == b) return true;
+    if (a.contains(b) || b.contains(a)) return true;
+    return _similaridadePalavras(a, b) >= 0.6;
+  }
+
+  double _similaridadePalavras(String a, String b) {
+    final pa = a.split(' ').where((w) => w.length > 2).toSet();
+    final pb = b.split(' ').where((w) => w.length > 2).toSet();
+    if (pa.isEmpty || pb.isEmpty) return 0;
+    final inter = pa.intersection(pb).length;
+    final menor = pa.length < pb.length ? pa.length : pb.length;
+    return inter / menor;
+  }
+
+  String _normalizar(String texto) {
+    var r = texto.toLowerCase().trim();
+    const acentos = {
+      'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a',
+      'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+      'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
+      'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o',
+      'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+      'ç': 'c', 'ñ': 'n',
+    };
+    for (final e in acentos.entries) {
+      r = r.replaceAll(e.key, e.value);
+    }
+    r = r
+        .replaceAll(RegExp(
+            r'\d+[\.,]?\d*\s*(kg|g|ml|l|lt|un|pct|cx)\b',
+            caseSensitive: false), '')
+        .replaceAll(RegExp(r'[^a-z\s]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return r;
+  }
+
+  // ─── Utilitários ─────────────────────────────────────────────────────────
 
   String _capitalizar(String nome) {
     return nome
@@ -364,68 +504,49 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     final n = nome.toLowerCase();
     if (RegExp(
       r'sabonete|shampoo|condicionador|pasta dent|escova|desodorante|absorvente|fralda|papel higi|detergente|sabao|amaciante|alcool|curativo',
-    ).hasMatch(n)) {
-      return Categoria.higiene;
-    }
+    ).hasMatch(n)) return Categoria.higiene;
     if (RegExp(
       r'fruta|legume|verdura|cenoura|tomate|alface|cebola|batata|banana|maca|laranja|limao|mamao|abacate|uva|morango|brocolis|couve|pepino',
-    ).hasMatch(n)) {
-      return Categoria.hortifruti;
-    }
+    ).hasMatch(n)) return Categoria.hortifruti;
     if (RegExp(
       r'arroz|feijao|macarrao|oleo|sal |acucar|cafe|leite|manteiga|margarina|queijo|iogurte|carne|frango|peixe|ovo |pao|biscoito|farinha|molho|refrigerante|suco|agua',
-    ).hasMatch(n)) {
-      return Categoria.mercado;
-    }
+    ).hasMatch(n)) return Categoria.mercado;
     return Categoria.outros;
   }
 
   String _inferirUnidade(String nome) {
     final n = nome.toLowerCase();
-    if (RegExp(r'\bkg\b|quilo').hasMatch(n)) {
-      return 'kg';
-    }
-    if (RegExp(r'\bml\b|mililitro').hasMatch(n)) {
-      return 'ml';
-    }
-    if (RegExp(r'\bl\b|litro|\blt\b').hasMatch(n)) {
-      return 'L';
-    }
-    if (RegExp(r'\bg\b|grama').hasMatch(n)) {
-      return 'g';
-    }
+    if (RegExp(r'\bkg\b|quilo').hasMatch(n)) return 'kg';
+    if (RegExp(r'\bml\b|mililitro').hasMatch(n)) return 'ml';
+    if (RegExp(r'\bl\b|litro|\blt\b').hasMatch(n)) return 'L';
+    if (RegExp(r'\bg\b|grama').hasMatch(n)) return 'g';
     return 'un';
   }
 
   double _inferirPesoUnitario(String nome, String unidade) {
     final n = nome.toLowerCase();
-
     final match = RegExp(
       r'(\d+[\.,]?\d*)\s*(kg|g|l|ml|lt)',
       caseSensitive: false,
     ).firstMatch(n);
-
     if (match != null) {
       final valor =
           double.tryParse(match.group(1)!.replaceAll(',', '.')) ?? 1.0;
-      final unidadeEncontrada = match.group(2)!.toLowerCase();
-      if (unidadeEncontrada == 'kg') {
-        return valor * 1000;
-      }
-      if (unidadeEncontrada == 'l' || unidadeEncontrada == 'lt') {
-        return valor * 1000;
-      }
+      final u = match.group(2)!.toLowerCase();
+      if (u == 'kg') return valor * 1000;
+      if (u == 'l' || u == 'lt') return valor * 1000;
       return valor;
     }
-
     switch (unidade) {
-      case 'kg': { return 1000; }
-      case 'L': { return 1000; }
-      case 'ml': { return 250; }
-      case 'g': { return 500; }
-      default: { return 100; }
+      case 'kg': return 1000;
+      case 'L': return 1000;
+      case 'ml': return 250;
+      case 'g': return 500;
+      default: return 100;
     }
   }
+
+  // ─── UI ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -487,12 +608,10 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
               ],
             ),
           ),
-
           Expanded(
             child: Stack(
               children: [
                 WebViewWidget(controller: _controller),
-
                 if (_extraindo)
                   Container(
                     color: Colors.black.withValues(alpha: 0.6),
@@ -526,7 +645,6 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
               ],
             ),
           ),
-
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -560,4 +678,29 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
       ),
     );
   }
+}
+
+// ─── Modelos auxiliares internos ─────────────────────────────────────────────
+
+/// Representa um item bruto extraído do JS antes do agrupamento.
+class _ItemBruto {
+  final String nome;
+  final double qtd;
+  final double total;
+  _ItemBruto({required this.nome, required this.qtd, required this.total});
+}
+
+/// Representa um grupo de produtos que foram considerados iguais/similares.
+class _GrupoProduto {
+  final String nomeOriginal;
+  final String nomeNormalizado;
+  double totalGeral;
+  double qtdGeral;
+
+  _GrupoProduto({
+    required this.nomeOriginal,
+    required this.nomeNormalizado,
+    required this.totalGeral,
+    required this.qtdGeral,
+  });
 }
