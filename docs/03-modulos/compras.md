@@ -3,7 +3,7 @@
 - Documento: Especificação do Módulo de Compras
 - Versão: v1.0
 - Owners: Equipe de Produto / Engenharia
-- Last_update_date: 2026-06-24
+- Last_update_date: 2026-06-20
 - Status: Draft
 
 ---
