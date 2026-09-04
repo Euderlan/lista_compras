@@ -9,6 +9,7 @@ class ProdutoEstoque {
   final double quantidade;
   final String unidade; // 'kg', 'g', 'L', 'ml', 'un'
   final double pesoUnitario; // peso/volume por unidade em gramas ou ml
+  final double precoUnitario; // unit price (R$) per unit
   final DateTime dataCompra;
   final String mesAno;
   final bool acabou;
@@ -23,6 +24,7 @@ class ProdutoEstoque {
     required this.quantidade,
     required this.unidade,
     required this.pesoUnitario,
+    required this.precoUnitario,
     required this.dataCompra,
     required this.mesAno,
     this.acabou = false,
@@ -52,6 +54,7 @@ class ProdutoEstoque {
     bool? acabou,
     DateTime? proximaNotificacao,
     int? diasSnooze,
+    double? precoUnitario,
   }) {
     return ProdutoEstoque(
       id: id ?? this.id,
@@ -65,7 +68,7 @@ class ProdutoEstoque {
       mesAno: mesAno ?? this.mesAno,
       acabou: acabou ?? this.acabou,
       proximaNotificacao: proximaNotificacao ?? this.proximaNotificacao,
-      diasSnooze: diasSnooze ?? this.diasSnooze,
+      precoUnitario: precoUnitario ?? this.precoUnitario,
     );
   }
 }

@@ -1,9 +1,11 @@
+```markdown
 # Prompt de Documentação: Implementação de Compartilhamento via WhatsApp
 
 **Persona Aplicada:** persona-08.md (Especialista em Documentação Técnica e Arquitetura de Software)
 
 **Objetivo:** 
 Analisar o código-fonte do projeto `lista_compras` para gerar a documentação técnica detalhada da funcionalidade de "Compartilhamento via WhatsApp". O objetivo é 
+demonstrar tecnicamente como a funcionalidade foi implementada, desde a coleta dos dados da lista até a integração com o aplicativo externo.
 
 **Contexto de Análise:**
 O modelo deve vasculhar todo o diretório `C:\Users\EudFr\OneDrive\Documentos\VSCODEPROJETOS\lista_compras\flutter_application_1\lista_compras` buscando por:
@@ -41,3 +43,4 @@ A documentação deve ser escrita em Markdown e seguir a seguinte estrutura:
 - Mantenha a linguagem técnica, porém acessível.
 - Seja rigoroso na análise do código: não invente funcionalidades; baseie-se estritamente nos arquivos presentes no diretório.
 - Se encontrar padrões de projeto (ex: Repository, Service, Provider), mencione como eles foram aplicados nesta funcionalidade específica.
+```

@@ -7,6 +7,7 @@ import 'models/produto_acabando.dart';
 import 'models/produto_estoque.dart';
 import 'screens/home_screen.dart';
 import 'screens/historico_screen.dart';
+import 'screens/estoque_screen.dart';
 import 'screens/compras_futuras_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
@@ -328,10 +329,11 @@ Future<void> _adicionarComprasNota(
         quantidade: (dadosEstoque['quantidade'] as num).toDouble(),
         unidade: dadosEstoque['unidade'] as String,
         pesoUnitario: (dadosEstoque['peso_unitario'] as num).toDouble(),
-        dataCompra: DateTime.now(),
+                  precoUnitario: (dadosEstoque['preco_unitario'] as num).toDouble(),
+          dataCompra: DateTime.now(),
         mesAno: _mesAno,
       );
-      await _estoqueService.adicionarProduto(produto);
+      await _estoqueService.upsertProduto(produto);
     } catch (_) {}
   }
 }
@@ -473,6 +475,10 @@ Future<void> _removerProdutoAcabando(String id) async {
         );
       case 2:
         return HistoricoScreen(historico: _historico);
+      case 3:
+        return EstoqueScreen(
+          onRefresh: _carregarDados,
+        );
       default:
         return HomeScreen(
           compras: _comprasMesAtual,

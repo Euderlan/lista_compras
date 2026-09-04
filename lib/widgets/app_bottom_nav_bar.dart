@@ -52,6 +52,11 @@ class AppBottomNavBar extends StatelessWidget {
             activeIcon: Icon(Icons.history, size: 24),
             label: 'Historico',
           ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.inventory_outlined, size: 24),
+            activeIcon: Icon(Icons.inventory, size: 24),
+            label: 'Estoque',
+          ),
         ],
       ),
     );

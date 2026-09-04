@@ -18,6 +18,7 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
   bool _carregando = true;
   bool _extraindo = false;
   bool _notaCarregada = false;
+	String _selectedSite = 'RJ'; // default site selection
   String _status = 'Aguarde...';
 
   final List<Map<String, dynamic>> _produtosEstoqueExtraidos = [];
@@ -172,16 +173,24 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
     }
   }
 
-  String _montarUrlRJ(String urlOriginal) {
-    final chave = _extrairChave(urlOriginal);
-    if (chave.isNotEmpty) {
-      return 'https://www.fazenda.rj.gov.br/nfce/consulta?p=$chave|2|1|1|';
-    }
-    return 'https://www.fazenda.rj.gov.br/nfce/consulta';
+  // Monta a URL da nota fiscal de acordo com o site selecionado (RJ ou SC)
+String _montarUrl(String urlOriginal) {
+  final chave = _extrairChave(urlOriginal);
+  if (chave.isEmpty) {
+    // Se não houver chave, retorna a URL original sem alteração
+    return urlOriginal;
   }
+  // Escolhe o endpoint conforme a opção do usuário
+  if (_selectedSite == 'SC') {
+    // Site SC: parâmetro 'p=' recebe a chave diretamente
+    return 'https://sat.sef.sc.gov.br/tax.NET/Sat.Dfe.NFCe.Web/Consultas/ConsultaPublicaNFCe.aspx?p=$chave';
+  }
+  // Site padrão (RJ)
+  return 'https://www.fazenda.rj.gov.br/nfce/consulta?p=$chave|2|1|1|';
+}
 
   void _inicializarWebView() {
-    final urlRJ = _montarUrlRJ(widget.url);
+    final url = _montarUrl(widget.url);
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -206,7 +215,7 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
           onNavigationRequest: (_) => NavigationDecision.navigate,
         ),
       )
-      ..loadRequest(Uri.parse(urlRJ));
+      ..loadRequest(Uri.parse(url));
   }
 
   Future<void> _preencherChaveRJ() async {
@@ -571,6 +580,26 @@ class _WebViewNotaScreenState extends State<WebViewNotaScreen> {
             icon: const Icon(Icons.refresh, color: Colors.white),
             tooltip: 'Verificar novamente',
             onPressed: _verificarSeNotaCarregou,
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              // Update the selected site and reload the WebView with the appropriate URL
+              setState(() {
+                _selectedSite = value;
+                // Show loading indicator while the new page loads
+                _carregando = true;
+                _notaCarregada = false;
+                _status = 'Carregando nota fiscal...';
+              });
+              // Reload the WebView using the current selected site
+              final newUrl = _montarUrl(widget.url);
+              _controller.loadRequest(Uri.parse(newUrl));
+            },
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            itemBuilder: (ctx) => const [
+              PopupMenuItem(value: 'RJ', child: Text('RJ')),
+              PopupMenuItem(value: 'SC', child: Text('SC')),
+            ],
           ),
         ],
       ),

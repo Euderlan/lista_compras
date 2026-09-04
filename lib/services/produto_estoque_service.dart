@@ -34,6 +34,8 @@ class ProdutoEstoqueService {
       quantidade: (map['quantidade'] as num).toDouble(),
       unidade: map['unidade'] as String,
       pesoUnitario: (map['peso_unitario'] as num).toDouble(),
+      precoUnitario: (map['preco_unitario'] as num?)?.toDouble() ?? 0.0,
+
       dataCompra: DateTime.parse(map['data_compra'] as String),
       mesAno: map['mes_ano'] as String,
       acabou: map['acabou'] as bool,
@@ -67,7 +69,23 @@ class ProdutoEstoqueService {
     return produtos;
   }
 
-  // Busca todos os produtos do mês
+  // Busca todos os produtos (todos os meses)
+  Future<List<ProdutoEstoque>> buscarTodosProdutos() async {
+    try {
+      final response = await _supabase
+          .from('produtos_estoque')
+          .select()
+          .eq('usuario_id', _usuarioId);
+      return (response as List).map((m) => _mapParaProduto(m)).toList();
+    } catch (e) {
+      // Log error (in real app you might use a logger)
+      print('Erro ao buscar todos os produtos: $e');
+      return [];
+    }
+  }
+
+
+
   Future<List<ProdutoEstoque>> buscarProdutosMes(String mesAno) async {
     final response = await _supabase
         .from('produtos_estoque')
@@ -94,6 +112,7 @@ class ProdutoEstoqueService {
       'quantidade': produto.quantidade,
       'unidade': produto.unidade,
       'peso_unitario': produto.pesoUnitario,
+      'preco_unitario': produto.precoUnitario,
       'data_compra': produto.dataCompra.toIso8601String().substring(0, 10),
       'mes_ano': produto.mesAno,
       'acabou': false,
@@ -147,12 +166,91 @@ class ProdutoEstoqueService {
     await adiarNotificacao(id, 3);
   }
 
-  // Remove todos os produtos do mês (ao fechar o mês)
+  // Atualiza um produto existente (usado para editar quantidade ou preço)
+  Future<ProdutoEstoque> atualizarProduto(ProdutoEstoque produto) async {
+    final data = {
+      'nome': produto.nome,
+      'categoria': _categoriaParaString(produto.categoria),
+      'quantidade': produto.quantidade,
+      'unidade': produto.unidade,
+      'peso_unitario': produto.pesoUnitario,
+      'preco_unitario': produto.precoUnitario,
+      'data_compra': produto.dataCompra.toIso8601String().substring(0, 10),
+      'mes_ano': produto.mesAno,
+      'acabou': produto.acabou,
+      'proxima_notificacao': produto.proximaNotificacao?.toIso8601String().substring(0, 10),
+      'dias_snooze': produto.diasSnooze,
+    };
+    final response = await _supabase
+        .from('produtos_estoque')
+        .update(data)
+        .eq('id', produto.id)
+        .eq('usuario_id', _usuarioId)
+        .select()
+        .single();
+    return _mapParaProduto(response);
+  }
+
+  // Remove um produto específico
+  Future<void> removerProduto(String id) async {
+    await _supabase
+        .from('produtos_estoque')
+        .delete()
+        .eq('id', id)
+        .eq('usuario_id', _usuarioId);
+  }
+
+  // Upsert – insere ou atualiza produto existente (mesma nome, unidade e categoria)
+  Future<ProdutoEstoque> upsertProduto(ProdutoEstoque novo) async {
+    // Procura registro existente com mesmo nome, unidade e categoria
+    final existingMap = await _supabase
+        .from('produtos_estoque')
+        .select()
+        .eq('usuario_id', _usuarioId)
+        .eq('nome', novo.nome)
+        .eq('unidade', novo.unidade)
+        .eq('categoria', _categoriaParaString(novo.categoria))
+        .single()
+        .maybeSingle();
+
+    if (existingMap != null) {
+      // Atualiza quantidade e preço unitário (média ponderada)
+      final existingQty = (existingMap['quantidade'] as num).toDouble();
+      final existingPreco = (existingMap['preco_unitario'] as num).toDouble();
+      final totalQty = existingQty + novo.quantidade;
+      // Média ponderada do preço unitário
+      final totalPreco = (existingPreco * existingQty) + (novo.precoUnitario * novo.quantidade);
+      final newPrecoUnitario = totalPreco / totalQty;
+
+      final updateData = {
+        'quantidade': totalQty,
+        'preco_unitario': newPrecoUnitario,
+        // opcional: atualizar outros campos se necessário (peso, dataCompra, ...) – mantemos os originais
+      };
+
+      final response = await _supabase
+          .from('produtos_estoque')
+          .update(updateData)
+          .eq('id', existingMap['id'] as String)
+          .eq('usuario_id', _usuarioId)
+          .select()
+          .single();
+
+      return _mapParaProduto(response);
+    }
+    // Não existe registro – insere como novo
+    return await adicionarProduto(novo);
+    }
+
+
+  // Remove produtos do mês que já acabaram (quantidade <= 0)
   Future<void> removerProdutosMes(String mesAno) async {
     await _supabase
         .from('produtos_estoque')
         .delete()
         .eq('usuario_id', _usuarioId)
-        .eq('mes_ano', mesAno);
+        .eq('mes_ano', mesAno)
+        .lt('quantidade', 1);
   }
+
 }
